@@ -1,610 +1,203 @@
 # 🔥 Flame in Freefall
 ### AI-Powered Fire Safety Insights from Microgravity Combustion Data
 
-An interactive scientific research platform and grounded AI intelligence console exploring the physics of combustion aboard the **International Space Station (ISS)**. Built using authentic flight data from NASA's **BASS-II** (Burning and Suppression of Solids - II) and **FLEX** (Flame Extinguishment Experiment) investigations.
-
----
-
-> ⚠️ **Scientific & Operational Disclaimer:** *Flame in Freefall is an educational, research synthesis, and data visualization platform built for the NASA Space Apps Challenge. It is strictly an informational tool grounded in published NASA technical archives and is **not** a certified spacecraft fire-detection, suppression, or life-support flight safety system.*
-
----
-
-## 📑 Table of Contents
-1. [Introduction](#1-introduction)
-2. [Project Objectives](#2-project-objectives)
-3. [Main Project Features](#3-main-project-features)
-4. [Technology Stack](#4-technology-stack)
-5. [System Architecture](#5-system-architecture)
-6. [Dataset Documentation](#6-dataset-documentation)
-7. [Complete Data Dictionary Summary](#7-complete-data-dictionary-summary)
-8. [Website Pages, Filters & Charts Guide](#8-website-pages-filters--charts-guide)
-9. [AI Research Assistant & Example Questions](#9-ai-research-assistant--example-questions)
-10. [Known Scientific Limitations & Data Quality Notices](#10-known-scientific-limitations--data-quality-notices)
-11. [Installation & Setup Guide](#11-installation--setup-guide)
-12. [How to Run the Project Locally](#12-how-to-run-the-project-locally)
-13. [API Documentation](#13-api-documentation)
-14. [Testing & Verification](#14-testing--verification)
-15. [Troubleshooting Guide](#15-troubleshooting-guide)
-16. [Project Folder Structure](#16-project-folder-structure)
-17. [NASA Sources & Scientific References](#17-nasa-sources--scientific-references)
-18. [GitHub Repository Preparation](#18-github-repository-preparation)
-19. [Future Scope](#19-future-scope)
-20. [Conclusion](#20-conclusion)
-
----
-
-## 1. Introduction
-
-### Why Combustion in Microgravity Matters
-On Earth, fire is shaped by gravity. Hot combustion products are less dense than the cold ambient air, so they naturally rise—creating buoyant upward convection that draws fresh oxygen into the reaction zone and produces the familiar flickering teardrop flame.
-
-In the microgravity environment of an orbiting spacecraft, **natural buoyant convection is effectively suppressed by orders of magnitude** (reduced to residual accelerations between $10^{-6}\text{ and }10^{-4}\text{ g}$ on the ISS). Without dominant buoyancy:
-* **Diffusion-Governed Flame Geometries:** Quiescent liquid droplet burns (such as in the FLEX investigation) assume nearly spherically symmetric flame envelopes. Solid polymer fuels in forced flow ducts (such as in BASS-II) form rounded, hemispherical flame caps with blue reaction zones oriented directly into the incoming air stream.
-* **The Ventilation Airflow Hazard:** In truly stagnant microgravity air, flames quickly suffocate on their own accumulated combustion products. However, subtle spacecraft cabin ventilation fans ($1\text{ to }15\text{ cm/s}$) continuously deliver fresh oxygen while convective cooling remains weak, enabling materials to burn at **lower ambient oxygen concentrations** than terrestrial flammability screening standards (*NASA-STD-6001 Test 1*) predict.
-* **Elevated Carbon Monoxide ($CO$) Generation:** Incomplete, diffusion-limited combustion in depleted oxygen produces substantial spikes of toxic Carbon Monoxide. During BASS-II flight operations, measured concentrations reached **$950\text{ ppm}$ in Test `O13a`** (the highest numeric reading recorded), while subsequent burn Test `O13b` produced an over-range indication (`+OR`) beyond the electrochemical sensor's 1,000 ppm full-scale range, with little visible smoke particles—creating a severe, insidious atmospheric poisoning hazard for astronauts.
-
-### What This Project Does
-**Flame in Freefall** bridges the gap between complex NASA aerospace archives and intuitive scientific analysis. It transforms raw flight logs, sensor spreadsheets, and 144-page technical reports into:
-1. **Interactive telemetry dashboards** covering 126 solid-fuel flight burns (BASS-II) and 274 liquid-droplet flight burns (FLEX).
-2. **A planned protocol explorer** detailing 290 target experimental specifications.
-3. **An Evidence-to-Insight engine** that computes physical deltas with built-in scientific compatibility guardrails.
-4. **A grounded AI Research Assistant** providing cited answers from NASA archives with automatic failover between live Google Gemini LLM and local offline synthesis.
-
----
-
-## 2. Project Objectives
-
-1. **Democratize NASA Microgravity Data:** Make authentic ISS combustion telemetry accessible to students, educators, and aerospace researchers through an intuitive web interface.
-2. **Explore Authentic Flight Telemetry:** Allow users to filter, search, and deep-dive into genuine sensor records from the Microgravity Science Glovebox (MSG) and Combustion Integrated Rack (CIR).
-3. **Visualize Core Combustion Phenomena:** Graphically demonstrate flame extinction boundaries, toxic $CO$ generation spikes, and stoichiometric gas conservation.
-4. **Maintain Strict Scientific Segregation:** Keep planned pre-flight protocol specifications strictly separate from actual measured flight outcomes.
-5. **Deliver Evidence-Grounded AI Research:** Answer natural-language combustion queries supported by verifiable page-level citations from official NASA publications.
-6. **Promote Scientific Integrity:** Transparently expose telemetry anomalies (such as FLEX Test #114), sensor limitations, and missing data points without data fabrication.
-
----
-
-## 3. Main Project Features
-
-The web interface consists of **9 integrated modules** accessible via the collapsible sidebar:
-
-### 1. Mission Control (`/`)
-* Executive telemetry overview displaying facility hardware (Microgravity Science Glovebox), total archived flight runs (126), and calibrated oxygen bounds ($13.6\%\text{ to }22.2\%\ O_2$).
-* Real-time backend status strip indicating active records, indexed passages (470 chunks), and active AI engine.
-* Interactive 🌍 Earth vs. 🛰️ Microgravity scientific comparison cards explaining buoyancy suppression, the ventilation airflow paradox, and toxic $CO$ accumulation.
-
-### 2. Experiment Explorer (`/explorer`)
-* Comprehensive data table of all 126 BASS-II solid polymer burns.
-* Multi-parameter filtering: text search, fuel material category (PMMA Rod, PMMA Slab, PMMA Film, SIBAL Fabric, Nomex, Candle Wax), lead Principal Investigator, airflow direction (`Opposed` vs. `Concurrent`), and oxygen concentration range.
-* Client-side column sorting, detail inspection modals, and filtered CSV export.
-
-### 3. Combustion Analytics (`/analytics`)
-* **Extinction Boundary Scatter Plot:** Charts airflow velocity ($cm/s$) against chamber oxygen ($O_2\ \%$), grouping points into Sustained Flame, Quenched/Extinguished, and Observation Recorded.
-* **Carbon Monoxide Generation Chart:** Visualizes toxic $CO$ generation, highlighting Test `O13a` ($950\text{ ppm}$, the highest numeric reading) and noting that Test `O13b` produced an over-range indication (`+OR`) beyond the instrument's 1,000 ppm full-scale limit.
-* **Combustion Stoichiometry Plot:** Correlates oxygen consumed ($\Delta O_2$) against carbon dioxide produced ($\Delta CO_2$), confirming closed-chamber mass conservation.
-
-### 4. Test Deep-Dive (`/deep-dive`)
-* Granular inspection console for any individual BASS-II test run.
-* Displays hardware mounting, baffle plates, fan settings, and duct velocities.
-* Complete gas telemetry cards tracking raw vs. calibrated $O_2$, $CO_2$, and $CO$ with color-coded toxicity badges.
-* Authentic astronaut flight log excerpts and anomaly observations.
-
-### 5. FLEX Protocol Explorer (`/flex-protocol`)
-* Dedicated explorer for the **290 planned target conditions** specified in NASA's *FLEX Experiment Interface and Requirements Document (FLEX_EIRD_v4.pdf)* Section 5.3, Tables 6–12 (physical PDF pages 46–55).
-* **Explicit Scientific Guardrail:** Clearly labels rows as planned protocol specifications, **not** measured experimental results.
-* Pressure distribution charts (0.5 to 3.0 atm) and chamber pressure vs. oxygen fraction matrix scatter plots.
-
-### 6. FLEX Experimental Results Explorer (`/flex-results`)
-* Interactive dashboard for the **274 locally available authentic flight tests** from the Combustion Integrated Rack (CIR).
-* Three dedicated views: Flight Records Table, Visual Analytics, and Data Quality Audit.
-* Displays initial droplet diameters ($d_0$), visible flame extinction diameters ($d_{ext}$), burning rate constants ($K$), and burn durations ($t_b$).
-* **Test #114 Anomaly Banner:** Details the $0.0\text{ mmHg}$ pressure anomaly and its automatic exclusion from regression analytics.
-
-### 7. AI Research Assistant (`/assistant`)
-* Natural-language query interface with a 4-mode dataset selector: *All Datasets*, *BASS-II Experimental Records*, *FLEX Planned Conditions*, and *FLEX Experimental Results*.
-* Seamless dual-mode engine: calls Google Gemini when configured; automatically falls back to deterministic local evidence synthesis if offline or when quota is exhausted.
-* Citations drawer showing exact source documents, sections, page numbers, and direct NASA PSI URLs.
-* Filter-mismatch guidance alerting users when a query belongs to a different dataset.
-
-### 8. Insight Engine (`/insights`)
-* **Smart Experiment Matcher:** Natural-language search with explainable matching reasons.
-* **Scientific Comparison Engine:** Side-by-side telemetry comparison of 2 to 4 tests with mathematical delta calculations.
-* **Physical Compatibility Guardrails:** Active warnings on cross-material comparisons (PMMA vs. Nomex), aerodynamic mismatches (Opposed vs. Concurrent), and broken igniter complications.
-* **4-Tier Epistemological Breakdown:** Observed Facts $\rightarrow$ Calculated Results $\rightarrow$ Physical Interpretation $\rightarrow$ Documented Limitations.
-
-### 9. Data Inventory (`/inventory`)
-* Complete manifest of processed CSVs, extracted metadata, raw ISA-Tab archives, and official PDF technical reports.
-* Displays relative paths, byte sizes, record counts, and cryptographic SHA-256 integrity checksums.
-* Academic citation panel with one-click copy buttons for formal **APA** and **BibTeX** references.
-
----
-
-## 4. Technology Stack
-
-The project uses a decoupled, high-performance architecture verified directly from dependency files:
-
-| Layer | Technology | Exact Version | Purpose in Beginner-Friendly English |
-| :--- | :--- | :--- | :--- |
-| **Frontend Framework** | React | `^18.3.1` | Modern user interface library for building reactive web components |
-| **Language (Frontend)** | TypeScript | `^5.6.3` | Typed JavaScript that catches programming errors during development |
-| **Build Tool & Dev Server**| Vite | `^6.0.3` | Ultra-fast development server and production bundler |
-| **UI Styling** | Tailwind CSS | `^3.4.17` | Utility-first CSS styling framework providing the dark cosmic theme |
-| **Icons** | Lucide React | `^0.468.0` | Clean, modern vector icons used across the entire navigation system |
-| **Frontend Charts** | Recharts | `^2.15.0` | Declarative React charting library for responsive SVG graphs |
-| **Backend Framework** | FastAPI | `0.162.7` (`>=0.110.0`) | High-speed Python REST API framework with automatic OpenAPI docs |
-| **Backend Web Server** | Uvicorn | `0.54.0` (`>=0.29.0`) | Lightweight ASGI web server that runs the Python backend |
-| **Language (Backend)** | Python | `3.12.9` (verified) | Primary programming language powering the API and data pipeline |
-| **Data Processing** | Pandas | `3.0.5` (`>=2.0.0`) | Data science library for filtering, parsing, and cleaning CSV tables |
-| **Document Processing**| PyMuPDF (`fitz`) | `2.1` (`>=1.24.0`) | High-performance engine for extracting text and page citations from PDFs |
-| **Search & Retrieval** | Scikit-Learn | `1.9.0` (`>=1.4.0`) | Machine learning library providing TF-IDF vectorization for local search |
-| **Live AI Assistant** | Google Gemini API | `gemini-2.5-flash` | Advanced generative language model for conversational synthesis |
-| **Offline AI Fallback** | Custom Deterministic RAG | Local Python | Zero-cost, 100% offline evidence synthesis engine (no API key required) |
-| **Standalone Dashboard**| Streamlit | `1.67.0` (`>=1.35.0`)| Standalone single-script dashboard architecture (`app.py`) |
-| **Streamlit Visuals** | Plotly | `7.1.0` (`>=5.20.0`) | Interactive graphing library used in the Streamlit application |
-
----
-
-## 5. System Architecture
-
-Information flows through the system across 8 clear stages:
-
-```mermaid
-flowchart TD
-    subgraph S1["1. NASA Source Archives"]
-        A1["NASA PSI-25 BASS-II Report<br>(NASA/TM-20210011385.pdf)"]
-        A2["NASA PSI-69 FLEX Protocol<br>(FLEX_EIRD_v4.pdf)"]
-        A3["NASA PSI-69 Raw Flight Table<br>(PSI-69_Experimental table_FLEX.csv)"]
-    end
-
-    subgraph S2["2. Data Extraction & Preprocessing"]
-        B1["PyMuPDF Chunking Engine<br>(src/document_processor.py)"]
-        B2["Pandas Table Extraction<br>(src/extract_experiments.py)"]
-    end
-
-    subgraph S3["3. Processed Datasets"]
-        C1["bass_ii_experiments.csv<br>(126 flight records)"]
-        C2["flex_experiments.csv<br>(290 planned conditions)"]
-        C3["flex_experimental_results.csv<br>(274 measured records)"]
-        C4["search_index.json<br>(470 cited passages)"]
-    end
-
-    subgraph S4["4. Backend Services (FastAPI Port 8000)"]
-        D1["Structured Analytics Engine<br>(src/structured_engine.py)"]
-        D2["TF-IDF Retrieval Engine<br>(src/retriever.py)"]
-        D3["Dual LLM Client<br>(src/llm_client.py)"]
-        D4["17 REST API Endpoints<br>(backend/main.py)"]
-    end
-
-    subgraph S5["5. Frontend Client (React Vite Port 5174/5173)"]
-        E1["9 Page Views & Router<br>(frontend/src/pages/)"]
-        E2["Interactive Recharts Visuals<br>(Scatter, Bar, Regression)"]
-        E3["Evidence-to-Insight Engine<br>(Compatibility Guardrails)"]
-        E4["Grounded AI Research Assistant<br>(Citations & Mismatch Guidance)"]
-    end
-
-    A1 --> B1 & B2
-    A2 --> B1 & B2
-    A3 --> B2
-
-    B1 --> C4
-    B2 --> C1 & C2 & C3
-
-    C1 & C2 & C3 --> D1
-    C4 --> D2
-    D2 --> D3
-    D1 & D3 --> D4
-
-    D4 <-->|JSON REST API| E1
-    E1 --> E2 & E3 & E4
-```
-
----
-
-## 6. Dataset Documentation
-
-The application maintains **three distinct, unmerged datasets**:
-
-### Dataset A — BASS-II Solid Fuel Flight Experiments
-* **File:** `data/processed/bass_ii_experiments.csv`
-* **Verified Record Count:** **126 authentic flight records** (20 columns).
-* **Investigation:** Burning and Suppression of Solids - II (**PSI-25**), Microgravity Science Glovebox (MSG).
-* **Primary Source:** NASA Technical Memorandum *NASA/TM-20210011385* (October 2021), Table A.5.
-* **Scientific Scope:** Solid polymer flammability in low-speed forced duct airflow. Tests burned PMMA acrylic rods (6.35 mm to 12.7 mm), flat PMMA slabs (1 mm to 5 mm), thin PMMA films (100 µm to 400 µm), SIBAL fabric (cotton/fiberglass blend), Nomex III synthetic fabric, and candle wax.
-* **Key Measured Variables:** Airflow velocity ($0\text{ to }40\text{ cm/s}$), calibrated chamber oxygen before and after burning ($13.6\%\text{ to }22.2\%\ O_2$), $CO_2$ generation, and toxic $CO$ concentration readings.
-* **Carbon Monoxide Instrumentation Context:** Test `O13a` (As-run #91) generated **$950\text{ ppm}$**, which is the highest *numeric* reading recorded in the dataset. Immediately following on the same fuel specimen, Test `O13b` (As-run #92) produced an over-range indication (`+OR`) beyond the electrochemical sensor's 1,000 ppm full-scale range; no exact numeric concentration is recorded for O13b.
-
-### Dataset B — FLEX Planned Protocol Matrix
-* **File:** `data/processed/flex_experiments.csv`
-* **Verified Record Count:** **290 planned conditions** (16 columns).
-* **Investigation:** Flame Extinguishment Experiment (**PSI-69**), Combustion Integrated Rack (CIR).
-* **Primary Source:** *NASA FLEX Experiment Interface and Requirements Document (FLEX_EIRD_v4.pdf)*, Section 5.3, Tables 6 through 12 (physical PDF pages 46–55).
-* **Scientific Scope:** Pre-flight engineering and target environmental matrix for liquid hydrocarbon droplet burns. Specifies Methanol ($CH_3OH$, 145 conditions) and Heptane ($C_7H_{16}$, 145 conditions), chamber pressures ($0.5\text{ to }3.0\text{ atm}$), and oxygen fractions ($X_{O2}: 0.10\text{ to }0.40$).
-* **Diluent & Suppressant Categorization:**
-  * **Diluent / Balance Gas:** Nitrogen ($N_2$) serves as the carrier diluent and balance gas. It is present in 278 of the 290 conditions ($X_{N2} > 0$); in exactly 12 conditions with high suppressant fraction (0.70 suppressant, 0.30 $O_2$), the balanced nitrogen mole fraction is $0.0$.
-  * **Four Suppressant Categories:**
-    1. Carbon Dioxide ($CO_2$): 128 conditions (Tables 8, 11, 12).
-    2. Helium ($He$): 56 conditions (Table 9).
-    3. Sulfur Hexafluoride ($SF_6$): 56 conditions (Table 10).
-    4. None / Baseline: 50 conditions (pure air / $N_2$ diluent without added suppressant; Tables 6 and 7).
-* **Crucial Distinction:** **These are target protocol specifications, NOT measured flight results.** They contain no recorded burn rates or actual extinction outcomes.
-
-### Dataset C — FLEX As-Run Flight Experimental Results
-* **File:** `data/processed/flex_experimental_results.csv`
-* **Verified Record Count:** **274 locally available flight records** (20 columns).
-* **Investigation:** Flame Extinguishment Experiment (**PSI-69**), Combustion Integrated Rack (CIR).
-* **Primary Source:** NASA Physical Sciences Informatics raw catalog table `PSI-69_Experimental table_FLEX.csv`.
-* **Scientific Scope:** Authentic photographic and sensor measurements from flight operations between March 2009 and December 2011.
-* **Key Measured Variables:** Ambient pressure (mmHg and derived atm), initial droplet diameter ($d_0$, range: 1.5 to 4.7 mm), visible flame extinction diameter ($d_{ext}$), quasi-steady burning rate constant $K$ ($mm^2/s$), burn duration ($t_b$), and final outcome: Extinction (186, 67.9%), Disruption (61, 22.3%), or Completion (27, 9.9%).
-* **Recalculated Burning Rates:**
-  * Across the **258 flight records with valid, non-null burning rates**:
-    * **Methanol:** Mean burning rate constant is **$0.4715\text{ mm}^2/\text{s}$** ($N = 151$ valid flight burns, with 6 unmeasured/disrupted).
-    * **Heptane:** Mean burning rate constant is **$0.5448\text{ mm}^2/\text{s}$** ($N = 107$ valid flight burns, with 10 unmeasured/disrupted).
-
----
-
-## 7. Complete Data Dictionary Summary
-
-Every column in all three CSV datasets is rigorously documented in our dedicated guide:
-
-👉 **[Read the Full Data Dictionary](docs/DATA_DICTIONARY.md)**
-
-### Key Data Rules:
-1. **Preservation of Nulls:** Missing values are preserved as empty / `NaN` (e.g., 10 missing $CO$ values in BASS-II, 16 missing burning rates in FLEX Results). They are **never converted to zero**.
-2. **Derived Fields:** Derived quantities (such as $P_{\text{atm}} = P_{\text{mmHg}} / 760$ and $X_{N2} = 1 - X_{O2} - X_{\text{supp}}$) are clearly labeled as calculated transforms.
-3. **Anomaly Identification:** Test #114 is retained with its raw $0.0\text{ mmHg}$ reading, flagged with a visible UI warning, and excluded from regression calculations.
-
----
-
-## 8. Website Pages, Filters & Charts Guide
-
-For a complete beginner's tour of every card, metric pill, search box, dropdown filter, chart axis, unit, modal, and button:
-
-👉 **[Read the Complete Website User Guide](docs/WEBSITE_USER_GUIDE.md)**
-
-### Quick Reference of Key Pages:
-* **Mission Control (`/`):** High-level overview, physical science cards, and live health telemetry.
-* **Experiment Explorer (`/explorer`):** Search and filter all 126 BASS-II solid polymer burns.
-* **Combustion Analytics (`/analytics`):** Extinction scatter plot, toxic $CO$ generation bar chart, and stoichiometry plot.
-* **Test Deep-Dive (`/deep-dive`):** Granular telemetry console for any individual BASS-II flight run.
-* **FLEX Protocol Explorer (`/flex-protocol`):** Exploration of the 290 planned target test conditions.
-* **FLEX Results Explorer (`/flex-results`):** Exploration of the 274 measured liquid droplet burns.
-* **AI Research Assistant (`/assistant`):** Grounded Q&A with dataset filtering and source citations.
-* **Insight Engine (`/insights`):** Smart matcher and 4-tier scientific comparison engine with compatibility guardrails.
-* **Data Inventory (`/inventory`):** File manifest, SHA-256 hashes, and academic APA/BibTeX citations.
-
----
-
-## 9. AI Research Assistant & Example Questions
-
-For a detailed catalog of questions and evidence retrieval mechanics:
-
-👉 **[Read the AI Research Assistant Guide](docs/AI_RESEARCH_ASSISTANT_GUIDE.md)**
-
-### Example Questions by Dataset:
-
-#### A. BASS-II Questions (Select `BASS-II Experimental Records`):
-* *"Which experiment has the highest numeric final CO reading?"* $\rightarrow$ Retrieves Test `O13a` ($950\text{ ppm}$, the highest numeric reading), noting that subsequent burn `O13b` produced an over-range indication (`+OR`) beyond the instrument's 1,000 ppm full-scale range.
-* *"What solid materials were tested in BASS-II?"* $\rightarrow$ Lists PMMA rods, PMMA slabs, thin films, SIBAL fabric, and Nomex.
-* *"What is the relationship between consumed oxygen and produced carbon dioxide?"* $\rightarrow$ Retrieves the linear stoichiometric slope verifying closed-chamber mass conservation.
-
-#### B. FLEX Planned Protocol Questions (Select `FLEX Planned Conditions`):
-* *"How many planned conditions are available?"* $\rightarrow$ Confirms 290 conditions from *FLEX_EIRD_v4.pdf* Section 5.3, Tables 6–12 (physical PDF pages 46–55).
-* *"Which fuels are included in the planned matrix?"* $\rightarrow$ Methanol ($CH_3OH$) and Heptane ($C_7H_{16}$).
-* *"Which suppressants are considered?"* $\rightarrow$ $CO_2$ (128), $He$ (56), $SF_6$ (56), and baseline without added suppressant (50), with $N_2$ serving as diluent/balance gas ($X_{N2} > 0$ in 278 conditions, $X_{N2} = 0.0$ in 12 conditions).
-* *"What chamber pressure range is specified?"* $\rightarrow$ Discrete steps from $0.5\text{ to }3.0\text{ atm}$.
-
-#### C. FLEX Experimental Results Questions (Select `FLEX Experimental Results`):
-* *"What is the distribution of FLEX experimental outcomes?"* $\rightarrow$ 186 Extinction, 61 Disruption, 27 Completion (274 total flight records).
-* *"What is the average recorded burning rate by fuel?"* $\rightarrow$ Across 258 valid records, mean $K = 0.4715\text{ mm}^2/\text{s}$ for Methanol ($N = 151$ valid, 6 missing) and $0.5448\text{ mm}^2/\text{s}$ for Heptane ($N = 107$ valid, 10 missing).
-* *"Why is FLEX Test #114 flagged?"* $\rightarrow$ Explains the $0.0\text{ mmHg}$ anomaly and why it is excluded from pressure regressions.
-
-#### D. Multi-Dataset Questions (Select `All Datasets`):
-* *"What is the difference between BASS-II and FLEX?"* $\rightarrow$ Explains solid polymer duct flow (MSG) vs. liquid droplet combustion (CIR).
-* *"What is the difference between planned FLEX conditions and recorded FLEX results?"* $\rightarrow$ Clarifies pre-flight specifications vs. measured flight outcomes.
-
----
-
-## 10. Known Scientific Limitations & Data Quality Notices
-
-### 1. FLEX Test #114 Pressure Anomaly
-* **Observation:** Raw catalog row 114 records `ambient_pressure_mmhg = 0.0`.
-* **Scientific Inconsistency:** The same row records $O_2 = 0.20$, $N_2 = 0.45$, $CO_2 = 0.35$, a droplet diameter of $3.23\text{ mm}$, and an active flame burning for $18.9\text{ seconds}$. A flame cannot burn in a vacuum.
-* **System Treatment:** The reading is preserved verbatim in the database, flagged with a visible alert badge, and excluded from pressure vs. burning rate regressions. The exact root cause (e.g., sensor disconnect or uncalibrated zero-point) is unconfirmed in the NASA source file.
-
-### 2. FLEX Record Count Discrepancy
-* **Observation:** The local experimental CSV has **274 records**. The NASA PSI web catalog notes **275 entries**. NASA scientific publications cite **284 flight tests**.
-* **Status:** This discrepancy remains unresolved in the available local files and is transparently noted in the application.
-
-### 3. Missing Telemetry Values
-* Missing values (such as 10 unrecorded final $CO$ values in BASS-II and 16 missing burning rates in FLEX) are preserved as `null`/`NaN`. They are **never replaced with zero**, which would introduce false data.
-
-### 4. Planned vs. Recorded Data Segregation
-* The 290 planned conditions and 274 recorded results must **never be merged row-by-row**. Flight sequences were dynamically reordered during mission operations based on astronaut scheduling and hardware behavior.
-
-### 5. Gemini API Quotas & Offline Fallback
-* Live Gemini generation requires an active API key and available quota. If quota is exhausted (HTTP 429), the application automatically switches to **Local Evidence Mode**, ensuring 100% continuous uptime.
-
----
-
-## 11. Installation & Setup Guide
-
-### System Prerequisites
-* **Operating System:** Windows 10/11, macOS, or Linux.
-* **Python:** Python 3.12 (verified runtime: `Python 3.12.9`; minimum recommended: `3.10+`).
-* **Node.js:** Node.js 18 or higher with `npm` (verified runtime: Node `v24.18.0`, npm `11.16.0`).
-* **Git:** Git installed on your system.
-
-### Step 1: Clone the Repository
-Open your terminal (PowerShell on Windows) and run:
-```powershell
-# Replace with your actual GitHub repository URL once created:
-git clone https://github.com/<your-username>/flame-in-freefall.git
+**Flame in Freefall** is an AI-powered web application that explores how fire behaves in microgravity using NASA combustion experiment data. It transforms complex research datasets into interactive visualizations, experiment explorers, and an AI-powered research assistant to make space-based fire research easier to understand.
+
+## 🚀 Project Overview
+
+Fire behaves differently in microgravity than it does on Earth. Understanding these differences is important for spacecraft fire safety and future human space missions.
+
+Our project brings together NASA combustion research data to help users investigate fuel behavior, oxygen concentration, combustion conditions, burning rates, flame extinction, and suppressant effects.
+
+The platform combines data analysis, interactive dashboards, and AI-assisted research into one accessible application.
+
+## ✨ Key Features
+
+- **Mission Control Dashboard:** A central overview of the available combustion datasets and research insights.
+- **Experiment Explorer:** Explore BASS-II experiment records and their recorded conditions.
+- **Combustion Analytics:** Interactive charts and visual analysis of combustion measurements.
+- **Test Deep-Dive:** Examine individual combustion experiment records.
+- **FLEX Protocol Explorer:** Investigate planned FLEX experimental conditions, including fuel, pressure, oxygen, and suppressant mixtures.
+- **FLEX Results Explorer:** Explore experimental outcomes, burning rates, and flame extinction measurements.
+- **AI Research Assistant:** Ask questions about the datasets and receive evidence-based answers.
+- **Insight Engine:** Find useful patterns and comparisons across the datasets.
+- **Data Inventory:** Review the available datasets and their contents.
+
+## 📊 NASA Research Datasets
+
+The application integrates three distinct datasets:
+
+### 1. BASS-II — Burning and Suppression of Solids
+
+- **126 experimental records**
+- Source: NASA Technical Memorandum NASA/TM-20210011385.
+- Includes solid-fuel combustion experiments and recorded measurements.
+- Contains fuel information, airflow conditions, oxygen and carbon dioxide measurements, carbon monoxide readings, and experiment observations.
+
+### 2. FLEX Planned Experimental Conditions
+
+- **290 planned experimental conditions**
+- Source: FLEX Experiment Implementation Requirements Document (EIRD).
+- Includes methanol and heptane experiment conditions.
+- Covers pressure, oxygen concentration, diluent composition, and suppressant mixtures.
+- Nitrogen is treated as a diluent or balance gas, not as a suppressant.
+
+### 3. FLEX Experimental Results
+
+- **274 experimental records**
+- Source: NASA PSI-69 FLEX experimental results table.
+- Includes recorded combustion outcomes, initial droplet diameters, visible flame extinction diameters, burning rates, and burn times.
+- Records outcomes such as extinction, disruption, and completion.
+
+**Important:** Planned FLEX conditions are not measured experimental outcomes. BASS-II records are extracted from a NASA report and should not be mistaken for raw telemetry files.
+
+## 🧠 AI Research Assistant
+
+The AI Research Assistant helps users explore the available datasets through natural-language questions.
+
+It supports:
+- Dataset-related question answering.
+- Numerical and statistical queries.
+- Cross-dataset comparisons.
+- Evidence-based research responses.
+- Source references for supporting information.
+
+The application integrates the Google Gemini API, with a deterministic local fallback for supported questions when the external AI service is unavailable or its usage quota is exceeded.
+
+## 🛠️ Technology Stack
+
+| Component | Technologies |
+|---|---|
+| Frontend | React, TypeScript, Vite |
+| Styling | Tailwind CSS |
+| Backend | Python, FastAPI |
+| Data Processing | Pandas, PyMuPDF |
+| Data Retrieval | TF-IDF and structured retrieval |
+| AI Integration | Google Gemini API |
+| Visualization | Recharts, Plotly |
+| Testing | Python backend tests and frontend production build |
+
+## 🏗️ Application Architecture
+
+The project uses a frontend-and-backend architecture.
+
+- **Frontend:** Displays dashboards, charts, experiment records, and research tools.
+- **Backend:** Provides REST API endpoints and processes research data.
+- **Data Layer:** Stores and organizes the BASS-II and FLEX datasets.
+- **AI Layer:** Supports natural-language research queries and evidence retrieval.
+
+## 💻 Getting Started
+
+### Prerequisites
+
+- Python 3.10 or later recommended.
+- Node.js 18 or later.
+- npm.
+- Git.
+
+### 1. Clone the Repository
+
+Replace the example URL with your GitHub repository URL.
+
+```bash
+git clone https://github.com/LevelLord33/AI-Powered-Fire-Safety-Insights-.git
 cd flame-in-freefall
 ```
 
-### Step 2: Set Up Python Virtual Environment & Backend Dependencies
+### 2. Start the Application
+
+On Windows, run the supplied startup script from the project folder:
+
 ```powershell
-# Create virtual environment
-python -m venv .venv
-
-# Activate virtual environment:
-# On Windows PowerShell:
-.\.venv\Scripts\Activate.ps1
-# On Linux / macOS:
-source .venv/bin/activate
-
-# Install required Python dependencies
-pip install -r requirements.txt
+.\start.bat
 ```
 
-### Step 3: Install Frontend Dependencies
-```powershell
-cd frontend
-npm install
-cd ..
-```
+The application is designed to start the frontend and backend services.
 
-### Step 4: Configure Environment Variables (Optional)
-The application works **100% out of the box** without any API keys using local evidence synthesis. 
+### 3. Open the Application
 
-If you wish to enable live Google Gemini LLM generation:
-```powershell
-# Copy the example environment file
-cp .env.example .env
-```
-Edit `.env` and paste your Google Gemini API key:
-```ini
-API_HOST=127.0.0.1
-API_PORT=8000
-GEMINI_API_KEY="your_actual_api_key_here"
-```
-> 🔒 **Security Notice:** `.env` and `.streamlit/secrets.toml` are explicitly ignored by `.gitignore` and will never be committed to Git. Never commit real API keys.
+Once the services are running, open:
 
----
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://localhost:8000
+- **API Documentation:** http://localhost:8000/docs
 
-## 12. How to Run the Project Locally
+If the frontend uses another available port, use the local address displayed in your terminal.
 
-### Option 1: 1-Click Launch (Windows PowerShell / Explorer)
-A pre-configured Windows launcher is included in the root directory:
-* **Double-click [`start.bat`](start.bat)** in Windows Explorer, OR
-* Run `.\start.bat` in PowerShell.
+### 4. Gemini API Configuration
 
-This will automatically open the FastAPI backend on port 8000 in one terminal and the React Vite dev server on port 5174/5173 in another.
+The AI Research Assistant can use a Google Gemini API key when configured.
 
----
+Set the `GEMINI_API_KEY` environment variable using your own API key. Follow the project's environment configuration instructions.
 
-### Option 2: Manual Multi-Terminal Startup
+The local deterministic fallback supports selected research queries when Gemini is unavailable.
 
-#### Terminal 1 — Start FastAPI Backend:
-```powershell
-# With your virtual environment activated:
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-* **Backend API:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
-* **Interactive Swagger Docs:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-* **Health Check Endpoint:** [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
+**Security:** Never upload API keys, passwords, or private environment files to GitHub.
 
-#### Terminal 2 — Start React Frontend:
-```powershell
-cd frontend
-npm run dev
-```
-* **Frontend Web Application:** [http://localhost:5174](http://localhost:5174) (or [http://localhost:5173](http://localhost:5173))
-
----
-
-### Option 3: Standalone Streamlit Dashboard (Backup Architecture)
-If you prefer running the single-file Streamlit interface:
-```powershell
-streamlit run app.py --server.port 8501
-```
-* **Streamlit App:** [http://localhost:8501](http://localhost:8501)
-
-### Stopping the Servers
-In either terminal window, press `Ctrl + C` to cleanly stop the server.
-
----
-
-## 13. API Documentation
-
-The FastAPI backend exposes **17 REST endpoints** grouped into 7 functional domains:
-
-### 1. System & Health
-* `GET /api/health` — Returns system connectivity, record counts (126 BASS-II), indexed chunk counts (470 passages), and active AI mode.
-
-### 2. BASS-II Flight Experiments
-* `GET /api/experiments/summary` — Returns statistical ranges (min/max $O_2$, material categories, flow modes).
-* `GET /api/experiments` — Paginated flight experiment catalog. Supports query parameters: `page`, `limit`, `material`, `pi`, `flow_config`, `min_o2`, `max_o2`, and `search`.
-* `GET /api/experiments/{test_id}` — Retrieves full telemetry and flight log text for a single test (e.g., `/api/experiments/T1`, `/api/experiments/O13a`).
-
-### 3. Combustion Analytics
-* `GET /api/analytics/extinction-boundary` — Returns plotted points for air velocity vs. oxygen concentration with flame survival classifications.
-* `GET /api/analytics/gas-correlations` — Returns consumed $O_2$ vs. produced $CO_2$ stoichiometric correlations and toxic $CO$ generation spikes.
-
-### 4. FLEX Planned Conditions
-* `GET /api/flex/summary` — Returns summary counts (290 conditions, 2 fuels, 4 suppressants, 0.5 to 3.0 atm range).
-* `GET /api/flex/conditions` — Paginated target conditions list with filters for `fuel`, `suppressant`, `fiber_support`, `min_pressure`, `max_pressure`, `min_o2`, `max_o2`, and `search`.
-* `GET /api/flex/analytics` — Returns pressure distribution bars and matrix scatter points.
-
-### 5. FLEX Flight Experimental Results
-* `GET /api/flex-results/summary` — Returns total flight records (274), outcome distributions, fuel counts, and Test #114 anomaly details.
-* `GET /api/flex-results/records` — Paginated flight records table with filters for `fuel`, `outcome`, pressure, $O_2$, burning rate, and search.
-* `GET /api/flex-results/records/{test_num}` — Detailed single record lookup with pressure anomaly warning metadata.
-* `GET /api/flex-results/analytics` — Returns outcome distributions, fuel breakdowns, and pressure vs. burning rate regression data with Test #114 excluded.
-
-### 6. AI Research Assistant
-* `POST /api/assistant/query` — Accepts a JSON body `{"question": "string", "dataset": "all" | "bass_ii" | "flex_planned" | "flex_results"}` and returns an evidence-grounded answer with verified page citations.
-
-### 7. Insight Engine & Inventory
-* `POST /api/insights/match` — Matches flight experiments against natural language queries and parameter filters.
-* `POST /api/insights/compare` — Side-by-side scientific comparison of 2 to 4 tests across `bass_ii`, `flex_results`, or `cross_investigation` with physical compatibility guardrail warnings.
-* `GET /api/inventory` — Complete manifest of all NASA documents, CSV tables, and byte sizes.
-
----
-
-## 14. Testing & Verification
-
-### 1. Frontend Production Build & TypeScript Verification
-To verify that the React TypeScript application compiles cleanly with zero type errors:
-```powershell
-npm --prefix frontend run build
-```
-* **Verified Result:** Compiles all 2,215 modules with zero errors (`tsc -b`), generating the production bundle in `frontend/dist/`.
-
-### 2. Backend Automated Test Suite
-The backend includes a comprehensive 20-test verification suite covering all REST endpoints, schemas, filtering, and RAG retrieval:
-```powershell
-# With virtual environment activated and httpx installed:
-python -X utf8 tests/test_backend_api.py
-```
-* **Historical Verification:** All 20 tests passed successfully on 2026-10-23 (see [PHASE8_RELEASE_REPORT.md](PHASE8_RELEASE_REPORT.md)).
-* *Note:* Requires `httpx` installed in your Python environment for Starlette's `TestClient`.
-
----
-
-## 15. Troubleshooting Guide
-
-### 1. `connect ECONNREFUSED 127.0.0.1:8000` (HTTP 500 in Vite)
-* **Cause:** The React frontend is running, but the FastAPI backend server is stopped.
-* **Fix:** Open a separate terminal and run:
-  `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload`
-
-### 2. `python.exe failed to run: The file cannot be accessed by the system`
-* **Cause:** Windows App Execution Alias is intercepting the `python` command.
-* **Fix:** Use the explicit path to your Python installation or virtual environment:
-  `& "C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe" -m venv .venv`
-
-### 3. Port 8000 or 5173/5174 Already in Use
-* **Cause:** A previous instance of the server is still running in the background.
-* **Fix:** Check running processes or specify an alternate port:
-  `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8001`
-  *(Update `frontend/vite.config.ts` target proxy if you change the backend port).*
-
-### 4. Gemini API Rate Limit (HTTP 429)
-* **Cause:** Google Gemini API free-tier quota has been temporarily exhausted.
-* **Fix:** No action required! The application automatically switches to **Local Evidence Mode** and synthesizes the answer directly from local indexed NASA chunks.
-
----
-
-## 16. Project Folder Structure
+## 📁 Project Structure
 
 ```text
 flame-in-freefall/
-├── README.md                      # Main project documentation and quick-start guide
-├── start.bat                      # 1-click Windows launcher for Backend + Frontend
-├── requirements.txt               # Backend Python dependencies
-├── .env.example                   # Example configuration for environment variables
-├── .gitignore                     # Git exclusion rules (secrets, node_modules, .venv)
-├── app.py                         # Standalone Streamlit dashboard (backup architecture)
-│
-├── frontend/                      # Modern React + Vite + TypeScript application
-│   ├── package.json               # Frontend dependencies (React, Recharts, Lucide, Vite)
-│   ├── vite.config.ts             # Vite configuration with /api proxy to port 8000
-│   ├── tailwind.config.js         # Cosmic space theme design system
-│   └── src/
-│       ├── App.tsx                # Master routing (9 module routes)
-│       ├── pages/                 # Full-page components (MissionControl, Explorer, etc.)
-│       ├── components/            # Reusable UI widgets (Sidebar, GlassCard, MetricPill)
-│       ├── services/              # API communication layer (api.ts)
-│       └── types/                 # TypeScript interfaces matching backend schemas
-│
-├── backend/                       # FastAPI REST API backend
-│   ├── main.py                    # 17 REST endpoints and request handlers
-│   ├── schemas.py                 # Pydantic data validation models
-│   └── config.py                  # Server configuration, CORS origins, and paths
-│
-├── src/                           # Shared scientific calculation & AI engine
-│   ├── data_loader.py             # CSV loading, filtering, and summary statistics
-│   ├── document_processor.py      # PDF parsing and citation-preserving text chunking
-│   ├── retriever.py               # TF-IDF search retrieval engine
-│   ├── llm_client.py              # Dual Gemini LLM + Local Deterministic Fallback
-│   └── structured_engine.py       # Insight matching, comparisons, and compatibility checks
 │
 ├── data/
-│   ├── docs/                      # Authentic NASA Technical Reports (PDF)
-│   │   ├── bass_ii_summary_report.pdf  # 144-page official BASS-II report (TM-20210011385)
-│   │   ├── FLEX_EIRD_v4.pdf       # FLEX Interface & Requirements Document (PSI-69)
-│   │   └── BASS.pdf               # Precursor BASS investigation reference
-│   ├── raw/                       # Original NASA archive tables and ISA-Tab archives
-│   │   ├── flex/PSI-69_Experimental table_FLEX.csv
-│   │   └── PSI-25_metadata_PSI_metadata_PSI-101_BASS-II.zip
-│   └── processed/                 # Cleaned datasets powering the application
-│       ├── bass_ii_experiments.csv        # 126 BASS-II flight burns
-│       ├── flex_experiments.csv           # 290 FLEX planned protocol conditions
-│       ├── flex_experimental_results.csv  # 274 FLEX flight experimental results
-│       └── search_index.json              # 470 indexed citation-backed passages
+│   ├── raw/
+│   ├── processed/
+│   └── docs/
 │
-├── docs/                          # In-depth supporting documentation
-│   ├── DATA_DICTIONARY.md         # Field-by-field reference for all 3 datasets
-│   ├── WEBSITE_USER_GUIDE.md      # Detailed walkthrough of all 9 pages
-│   └── AI_RESEARCH_ASSISTANT_GUIDE.md # Example questions, evidence, and guardrails
+├── docs/
+│   ├── DATA_DICTIONARY.md
+│   ├── WEBSITE_USER_GUIDE.md
+│   └── AI_RESEARCH_ASSISTANT_GUIDE.md
 │
-└── tests/                         # Automated test suite
-    └── test_backend_api.py        # 20 automated tests validating API endpoints
+├── frontend/
+│
+├── backend/
+│
+├── src/
+│
+├── app.py
+├── start.bat
+├── README.md
+└── requirements.txt
 ```
 
----
+*The structure above provides a high-level overview; individual source folders may contain additional files.*
 
-## 17. NASA Sources & Scientific References
+## 🔬 Why This Project Matters
 
-### NASA Physical Sciences Informatics (PSI) Investigations:
-1. **BASS-II Investigation (PSI-25):**
-   * *Investigation Title:* Burning and Suppression of Solids - II
-   * *Repository URL:* [https://psi.nasa.gov/physci/repo/data/investigations/PSI-25](https://psi.nasa.gov/physci/repo/data/investigations/PSI-25)
-   * *Digital Object Identifier (DOI):* [`10.60555/4qc4-de67`](https://doi.org/10.60555/4qc4-de67)
-2. **FLEX Investigation (PSI-69):**
-   * *Investigation Title:* Flame Extinguishment Experiment
-   * *Repository URL:* [https://psi.nasa.gov/physci/repo/data/investigations/PSI-69](https://psi.nasa.gov/physci/repo/data/investigations/PSI-69)
-3. **BASS Precursor Investigation (PSI-26):**
-   * *Investigation Title:* Burning and Suppression of Solids
-   * *Repository URL:* [https://psi.nasa.gov/physci/repo/data/investigations/PSI-26](https://psi.nasa.gov/physci/repo/data/investigations/PSI-26)
+Fire safety is an essential part of human space exploration. Microgravity changes how flames develop and how combustion products behave.
 
-### Primary Official NASA Publications:
-* **BASS-II Final Report:** Olson, S. L., & Ferkul, P. V. (2021). *Burning and Suppression of Solids - II (BASS-II) Final Report* (NASA/TM-20210011385). NASA Glenn Research Center, Cleveland, OH.
-* **FLEX Requirements Document:** NASA Glenn Research Center. *FLEX Experiment Interface and Requirements Document* (FLEX_EIRD_v4.pdf), Section 5.3, Tables 6–12 (physical PDF pages 46–55).
+By making NASA combustion research easier to explore, Flame in Freefall helps students, researchers, and space enthusiasts understand experimental evidence related to fire behavior in microgravity.
 
-*Notice on Licensing:* This repository does not currently specify an overarching project software license. Source NASA technical publications and PSI data archives are public domain works of the United States Government.
+The project supports research exploration that may contribute to better-informed fire safety studies for spacecraft and future space missions.
 
----
+## ⚠️ Data and Scientific Limitations
 
-## 18. GitHub Repository Preparation
+- The application is a research and educational tool, not a spacecraft fire-safety certification system.
+- Its findings are based on the supplied NASA research datasets.
+- Planned experiment conditions must not be interpreted as measured outcomes.
+- Missing experimental measurements are preserved as missing values rather than treated as zero.
+- AI-generated responses should be checked against their cited source records.
+- The application does not replace professional engineering analysis or NASA safety procedures.
 
-The repository is prepared for clean GitHub publishing:
-* **Secret Protection:** `.env`, `.env.local`, and `.streamlit/secrets.toml` are strictly ignored by `.gitignore`. No API keys or tokens are stored in the code.
-* **Exclusion of Bloat:** `node_modules/`, `frontend/dist/`, `.venv/`, and Python `__pycache__` directories are properly excluded.
-* **Large File Review:** The only large files are the official NASA reports in `data/docs/` (~48.9 MB), which are safely below GitHub's 100 MB hard limit. Raw zip archives in `data/raw/` are excluded by `.gitignore`.
-* **Zero Fake Badges:** Contains only verifiable markdown headings and verified relative file paths.
+## 📚 Documentation
 
----
+- [Data Dictionary](docs/DATA_DICTIONARY.md)
+- [Website User Guide](docs/WEBSITE_USER_GUIDE.md)
+- [AI Research Assistant Guide](docs/AI_RESEARCH_ASSISTANT_GUIDE.md)
 
-## 19. Future Scope
+## 🌌 Project Vision
 
-*Potential future research capabilities (not currently implemented):*
-* **Integration of Additional NASA PSI Datasets:** Incorporating data from the CIR ACME (Advanced Combustion via Microgravity Experiments) and Soot on the ISS campaigns.
-* **3D Flame Shape Reconstruction:** Utilizing machine learning computer vision to reconstruct 3D spherical flame boundaries from multi-angle flight video recordings.
-* **Automated Kinetic Mechanism Simulation:** Coupling Cantera chemical kinetics simulations directly into the comparison engine to model gas-phase reaction pathways in real time.
+Our vision is to make complex space combustion research more accessible through data science, interactive visualization, and AI-assisted exploration.
+
+**Flame in Freefall — Exploring Fire Beyond Earth.**
+
+## 👥 NASA Space Apps Challenge
+
+Developed as a project for the **NASA Space Apps Challenge**.
+
+This project uses publicly available NASA research publications and experimental datasets as its scientific foundation.
 
 ---
 
-## 20. Conclusion
-
-**Flame in Freefall** demonstrates how modern web engineering, interactive data visualization, and evidence-grounded AI can unlock complex space agency archives for the global research community. By presenting authentic flight records from the International Space Station with rigorous scientific guardrails, the platform honors NASA's open-science mission—providing actionable insights into combustion physics to safeguard the next generation of space explorers.
+**Built with curiosity, science, and a passion for safer space exploration.** 🔥🚀
