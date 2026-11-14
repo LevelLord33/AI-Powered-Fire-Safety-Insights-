@@ -1,0 +1,184 @@
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+import {
+  Rocket,
+  Search,
+  BarChart3,
+  Microscope,
+  Sparkles,
+  Bot,
+  ClipboardList,
+  ChevronLeft,
+  ChevronRight,
+  Flame,
+  Layers,
+  Activity,
+} from 'lucide-react';
+
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+const navItems = [
+  {
+    name: 'Mission Control',
+    path: '/',
+    icon: Rocket,
+    badge: 'Overview',
+  },
+  {
+    name: 'Experiment Explorer',
+    path: '/explorer',
+    icon: Search,
+    badge: '126 Tests',
+  },
+  {
+    name: 'Combustion Analytics',
+    path: '/analytics',
+    icon: BarChart3,
+    badge: 'Charts',
+  },
+  {
+    name: 'Test Deep-Dive',
+    path: '/deep-dive',
+    icon: Microscope,
+    badge: 'Sensors',
+  },
+  {
+    name: 'Insight Engine',
+    path: '/insights',
+    icon: Sparkles,
+    badge: 'Phase 7',
+  },
+  {
+    name: 'AI Research Assistant',
+    path: '/assistant',
+    icon: Bot,
+    badge: 'Gemini RAG',
+  },
+  {
+    name: 'FLEX Protocol Explorer',
+    path: '/flex-protocol',
+    icon: Layers,
+    badge: '290 Planned',
+  },
+  {
+    name: 'FLEX Results Explorer',
+    path: '/flex-results',
+    icon: Activity,
+    badge: '274 Flight',
+  },
+  {
+    name: 'Data Inventory',
+    path: '/inventory',
+    icon: ClipboardList,
+    badge: '318 Chunks',
+  },
+];
+
+export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
+  return (
+    <aside
+      className={`fixed top-0 left-0 h-screen z-30 transition-all duration-300 ease-in-out border-r border-cosmic-border bg-cosmic-surface/95 backdrop-blur-xl flex flex-col ${
+        collapsed ? 'w-20' : 'w-64'
+      }`}
+    >
+      {/* Brand Header */}
+      <div className="h-16 flex items-center justify-between px-4 border-b border-cosmic-border">
+        <div className="flex items-center gap-3 overflow-hidden">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-combustion/20 to-amber-flame/30 border border-amber-combustion/40 flex items-center justify-center text-amber-combustion shrink-0 shadow-glow-amber">
+            <Flame size={20} className="animate-pulse" />
+          </div>
+          {!collapsed && (
+            <div className="truncate">
+              <h1 className="font-display font-bold text-sm tracking-wide text-space-textMain truncate">
+                Flame in Freefall
+              </h1>
+              <p className="text-[10px] font-mono text-cyan-glow uppercase tracking-wider">
+                NASA BASS-II • PSI-25
+              </p>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onToggle}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="w-7 h-7 rounded-md bg-cosmic-elevated/70 border border-cosmic-border flex items-center justify-center text-space-textMuted hover:text-cyan-glow hover:border-cyan-glow/40 transition-colors shrink-0"
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        </button>
+      </div>
+
+      {/* Navigation Links */}
+      <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) =>
+                `group flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-all duration-200 relative ${
+                  isActive
+                    ? 'bg-cosmic-elevated border border-cyan-glow/40 text-cyan-glow shadow-glow-cyan/50 font-semibold'
+                    : 'text-space-textMuted hover:text-space-textMain hover:bg-cosmic-elevated/40 border border-transparent'
+                }`
+              }
+              title={collapsed ? item.name : undefined}
+            >
+              {({ isActive }) => (
+                <>
+                  <Icon
+                    size={18}
+                    className={`shrink-0 transition-transform duration-200 group-hover:scale-110 ${
+                      isActive ? 'text-cyan-glow' : 'text-space-textMuted'
+                    }`}
+                  />
+                  {!collapsed && (
+                    <div className="flex-1 flex items-center justify-between truncate">
+                      <span className="truncate">{item.name}</span>
+                      <span
+                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                          isActive
+                            ? 'bg-cyan-dim border-cyan-glow/30 text-cyan-glow'
+                            : 'bg-cosmic-darkest/60 border-cosmic-border text-space-textMuted group-hover:border-space-textMuted/40'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    </div>
+                  )}
+                  {isActive && (
+                    <div className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-cyan-glow shadow-[0_0_8px_#38bdf8]" />
+                  )}
+                </>
+              )}
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      {/* Flight Facility Badge at Bottom */}
+      <div className="p-3 border-t border-cosmic-border">
+        <div className="rounded-lg p-2.5 bg-cosmic-darkest/60 border border-cosmic-border text-[11px] font-mono text-space-textMuted">
+          {!collapsed ? (
+            <div>
+              <div className="text-space-textMain font-semibold flex items-center gap-1.5 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-space-green animate-pulse" />
+                <span>ISS Flight Facility</span>
+              </div>
+              <p className="text-[10px] text-space-textMuted mt-1 leading-tight">
+                Microgravity Science Glovebox (MSG) sealed combustion chamber
+              </p>
+            </div>
+          ) : (
+            <div className="flex justify-center" title="ISS Microgravity Science Glovebox">
+              <span className="w-2 h-2 rounded-full bg-space-green animate-pulse" />
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+};

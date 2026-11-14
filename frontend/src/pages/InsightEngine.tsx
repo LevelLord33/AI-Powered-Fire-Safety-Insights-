@@ -1,0 +1,1174 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Sparkles,
+  Search,
+  SlidersHorizontal,
+  Scale,
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  BookOpen,
+  Layers,
+  Info,
+  X,
+  Plus,
+  RefreshCw,
+  Flame,
+  ShieldAlert,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
+import { api } from '../services/api';
+import {
+  ExperimentMatchResponse,
+  ExperimentComparisonResponse
+} from '../types';
+
+export const InsightEngine: React.FC = () => {
+  // Navigation tabs
+  const [activeTab, setActiveTab] = useState<'matcher' | 'comparison'>('matcher');
+
+  // Search & Filter State
+  const [query, setQuery] = useState('');
+  const [materialFilter, setMaterialFilter] = useState('All');
+  const [flowFilter, setFlowFilter] = useState('All');
+  const [behaviorFilter, setBehaviorFilter] = useState('All');
+  const [minO2, setMinO2] = useState<number | ''>('');
+  const [maxO2, setMaxO2] = useState<number | ''>('');
+  const [minVelocity, setMinVelocity] = useState<number | ''>('');
+  const [maxVelocity, setMaxVelocity] = useState<number | ''>('');
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Matcher results state
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const [matchData, setMatchData] = useState<ExperimentMatchResponse | null>(null);
+
+  // Comparison State
+  const [selectedTestIds, setSelectedTestIds] = useState<string[]>(['T1', 'T2']);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [compareData, setCompareData] = useState<ExperimentComparisonResponse | null>(null);
+
+  // Initial load
+  useEffect(() => {
+    executeMatchSearch();
+    executeComparison(['T1', 'T2']);
+  }, []);
+
+  const executeMatchSearch = async (overrideQuery?: string) => {
+    setMatchLoading(true);
+    setMatchError(null);
+    try {
+      const activeQuery = overrideQuery !== undefined ? overrideQuery : query;
+      const res = await api.matchExperiments({
+        query: activeQuery.trim() || undefined,
+        material_category: materialFilter !== 'All' ? materialFilter : undefined,
+        flow_configuration: flowFilter !== 'All' ? flowFilter : undefined,
+        flame_behavior: behaviorFilter !== 'All' ? behaviorFilter : undefined,
+        min_initial_o2: minO2 !== '' ? Number(minO2) : undefined,
+        max_initial_o2: maxO2 !== '' ? Number(maxO2) : undefined,
+        min_air_velocity: minVelocity !== '' ? Number(minVelocity) : undefined,
+        max_air_velocity: maxVelocity !== '' ? Number(maxVelocity) : undefined,
+        limit: 15,
+      });
+      setMatchData(res);
+    } catch (err: any) {
+      setMatchError(err?.detail || err?.message || 'Failed to search experiments');
+    } finally {
+      setMatchLoading(false);
+    }
+  };
+
+  const [comparisonInvestigation, setComparisonInvestigation] = useState<
+    'bass_ii' | 'flex_results' | 'cross_investigation'
+  >('bass_ii');
+  const [customTestId, setCustomTestId] = useState('');
+
+  const executeComparison = async (
+    idsToCompare?: string[],
+    invOverride?: 'bass_ii' | 'flex_results' | 'cross_investigation'
+  ) => {
+    const ids = idsToCompare || selectedTestIds;
+    const inv = invOverride || comparisonInvestigation;
+    if (ids.length < 2) {
+      setCompareError('Select at least 2 experiments to perform a side-by-side scientific comparison.');
+      return;
+    }
+    setCompareLoading(true);
+    setCompareError(null);
+    try {
+      const res = await api.compareExperiments(ids, true, inv);
+      setCompareData(res);
+      setSelectedTestIds(ids);
+      if (invOverride) setComparisonInvestigation(invOverride);
+    } catch (err: any) {
+      setCompareError(err?.detail || err?.message || 'Failed to compare experiments');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const toggleTestSelection = (testId: string) => {
+    const normalized = testId.toUpperCase();
+    if (selectedTestIds.includes(normalized)) {
+      setSelectedTestIds(selectedTestIds.filter((id) => id !== normalized));
+    } else {
+      if (selectedTestIds.length >= 4) {
+        alert('Maximum of 4 experiments can be compared simultaneously for rigorous scientific analysis.');
+        return;
+      }
+      setSelectedTestIds([...selectedTestIds, normalized]);
+    }
+  };
+
+  const addCustomTestId = () => {
+    const val = customTestId.trim().toUpperCase();
+    if (!val) return;
+    if (!selectedTestIds.includes(val)) {
+      if (selectedTestIds.length >= 4) {
+        alert('Maximum of 4 experiments can be compared simultaneously.');
+        return;
+      }
+      const newIds = [...selectedTestIds, val];
+      setSelectedTestIds(newIds);
+      executeComparison(newIds, comparisonInvestigation);
+    }
+    setCustomTestId('');
+  };
+
+  const loadPresetComparison = (
+    ids: string[],
+    inv: 'bass_ii' | 'flex_results' | 'cross_investigation' = 'bass_ii',
+    tabToOpen: 'matcher' | 'comparison' = 'comparison'
+  ) => {
+    setSelectedTestIds(ids);
+    setComparisonInvestigation(inv);
+    setActiveTab(tabToOpen);
+    executeComparison(ids, inv);
+  };
+
+  const quickQueries = [
+    { label: 'Low-Flow PMMA Extinction', query: 'PMMA extinction at low flow' },
+    { label: 'Cotton SIBAL Blowoff Limit', query: 'SIBAL blowoff high flow' },
+    { label: 'Sub-Ambient Hypoxic O₂', query: 'hypoxic low oxygen flame' },
+    { label: 'Thick Rod Soot Transitions', query: 'clear rod sooty flame' },
+  ];
+
+  return (
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto pb-12">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-cosmic-border pb-6">
+        <div>
+          <div className="flex items-center gap-2 text-cyan-plasma text-sm font-semibold uppercase tracking-wider mb-1">
+            <Sparkles size={16} className="animate-spin-slow" />
+            <span>Phase 7 Evidence-to-Insight Engine</span>
+          </div>
+          <h1 className="font-display font-bold text-2xl md:text-3xl text-space-textMain flex items-center gap-3">
+            Evidence-to-Insight Engine
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-cyan-plasma/10 border border-cyan-plasma/30 text-cyan-plasma font-normal">
+              Scientific Grounding
+            </span>
+          </h1>
+          <p className="text-space-textMuted text-sm mt-1 max-w-3xl">
+            Beyond general chatbots: match actual NASA BASS-II flight trials by rigorous conditions,
+            detect physical incompatibilities, and synthesize structured 4-tier scientific insights.
+          </p>
+        </div>
+
+        {/* Selected experiments floating pill */}
+        <div className="flex items-center gap-3 bg-cosmic-surface/90 border border-cosmic-border p-2.5 rounded-xl backdrop-blur-md shadow-card">
+          <div className="text-xs">
+            <span className="text-space-textMuted">Comparison Queue: </span>
+            <span className="font-bold text-cyan-plasma">{selectedTestIds.length} / 4</span>
+          </div>
+          <button
+            onClick={() => {
+              setActiveTab('comparison');
+              executeComparison();
+            }}
+            disabled={selectedTestIds.length < 2 || compareLoading}
+            className="px-3.5 py-1.5 rounded-lg bg-cyan-plasma/20 hover:bg-cyan-plasma/30 border border-cyan-plasma/40 text-cyan-plasma text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Scale size={14} />
+            <span>Compare Now</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Primary Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-cosmic-border">
+        <button
+          id="tab-matcher"
+          type="button"
+          onClick={() => setActiveTab('matcher')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all cursor-pointer ${
+            activeTab === 'matcher'
+              ? 'border-cyan-plasma text-cyan-plasma bg-cyan-plasma/5'
+              : 'border-transparent text-space-textMuted hover:text-space-textMain'
+          }`}
+        >
+          <Search size={16} />
+          <span>Smart Experiment Matcher</span>
+          {matchData && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-cosmic-card border border-cosmic-border text-space-textMuted">
+              {matchData.returned_count}
+            </span>
+          )}
+        </button>
+
+        <button
+          id="tab-comparison"
+          type="button"
+          onClick={() => {
+            setActiveTab('comparison');
+            executeComparison();
+          }}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all cursor-pointer ${
+            activeTab === 'comparison'
+              ? 'border-cyan-plasma text-cyan-plasma bg-cyan-plasma/5'
+              : 'border-transparent text-space-textMuted hover:text-space-textMain'
+          }`}
+        >
+          <Scale size={16} />
+          <span>Scientific Comparison & 4-Tier Insight</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-combustion/10 border border-amber-combustion/30 text-amber-combustion">
+            {selectedTestIds.length} Selected
+          </span>
+        </button>
+      </div>
+
+      {/* TAB 1: SMART EXPERIMENT MATCHER */}
+      {activeTab === 'matcher' && (
+        <div className="space-y-6">
+          {/* Search Bar & Controls */}
+          <div className="bg-cosmic-surface/90 border border-cosmic-border rounded-xl p-5 backdrop-blur-md shadow-card space-y-4">
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-space-textMuted" size={18} />
+                <input
+                  type="text"
+                  placeholder="Ask a scientific research question (e.g., 'PMMA extinction at low airflow velocity', 'SIBAL blowoff')..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && executeMatchSearch()}
+                  className="w-full glass-input rounded-lg pl-10 pr-10 py-2.5 text-sm text-space-textMain placeholder-space-textMuted focus:outline-none focus:border-cyan-plasma focus:ring-1 focus:ring-cyan-plasma transition-all shadow-inner"
+                />
+                {query && (
+                  <button
+                    onClick={() => {
+                      setQuery('');
+                      executeMatchSearch('');
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-space-textMuted hover:text-space-textMain"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`px-4 py-2.5 rounded-lg border text-sm font-medium flex items-center gap-2 transition-all ${
+                  showFilters
+                    ? 'bg-cyan-plasma/10 border-cyan-plasma/40 text-cyan-plasma'
+                    : 'bg-cosmic-card border-cosmic-border text-space-textMuted hover:text-space-textMain'
+                }`}
+              >
+                <SlidersHorizontal size={16} />
+                <span>Filters</span>
+                {showFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+
+              <button
+                onClick={() => executeMatchSearch()}
+                disabled={matchLoading}
+                className="px-6 py-2.5 rounded-lg bg-cyan-plasma hover:bg-cyan-plasma/90 text-cosmic-bg font-semibold text-sm shadow-glow-cyan flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+              >
+                {matchLoading ? <RefreshCw size={16} className="animate-spin" /> : <Search size={16} />}
+                <span>Find Experiments</span>
+              </button>
+            </div>
+
+            {/* Quick Suggestion Chips */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-space-textMuted flex items-center gap-1 font-medium">
+                <Flame size={12} className="text-amber-combustion" />
+                <span>Scientific Presets:</span>
+              </span>
+              {quickQueries.map((item, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setQuery(item.query);
+                    executeMatchSearch(item.query);
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-cosmic-card hover:bg-cyan-plasma/10 border border-cosmic-border hover:border-cyan-plasma/30 text-space-textMuted hover:text-cyan-plasma transition-all"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Expandable Scientific Filters */}
+            {showFilters && (
+              <div className="pt-4 border-t border-cosmic-border/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in text-xs">
+                {/* Material Filter */}
+                <div>
+                  <label className="block text-space-textMuted mb-1 font-medium">Fuel Material</label>
+                  <select
+                    value={materialFilter}
+                    onChange={(e) => setMaterialFilter(e.target.value)}
+                    className="w-full glass-input rounded-md px-3 py-2 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                  >
+                    <option value="All">All Materials</option>
+                    <option value="PMMA Rod">PMMA Rods (Clear & Black)</option>
+                    <option value="Thin PMMA Film">Thin PMMA Films (100–400 µm)</option>
+                    <option value="SIBAL Fabric (Cotton/Fiberglass)">SIBAL Fabric (Cotton)</option>
+                    <option value="Nomex Fabric">Nomex® III Fabric</option>
+                  </select>
+                </div>
+
+                {/* Flow Configuration */}
+                <div>
+                  <label className="block text-space-textMuted mb-1 font-medium">Flow Geometry</label>
+                  <select
+                    value={flowFilter}
+                    onChange={(e) => setFlowFilter(e.target.value)}
+                    className="w-full glass-input rounded-md px-3 py-2 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                  >
+                    <option value="All">All Configurations</option>
+                    <option value="Opposed">Opposed Flow (Stagnation)</option>
+                    <option value="Concurrent">Concurrent Flow (Downstream)</option>
+                  </select>
+                </div>
+
+                {/* Flame Behavior */}
+                <div>
+                  <label className="block text-space-textMuted mb-1 font-medium">Flame Outcome</label>
+                  <select
+                    value={behaviorFilter}
+                    onChange={(e) => setBehaviorFilter(e.target.value)}
+                    className="w-full glass-input rounded-md px-3 py-2 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                  >
+                    <option value="All">All Outcomes</option>
+                    <option value="Extinguished">Extinguished / Quenched (55 runs)</option>
+                    <option value="Sustained">Sustained Flame (25 runs)</option>
+                    <option value="Observation">Specialized Phenom / Steps (46 runs)</option>
+                  </select>
+                </div>
+
+                {/* Initial Oxygen Limits */}
+                <div>
+                  <label className="block text-space-textMuted mb-1 font-medium">Initial O₂ Range (%)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      placeholder="Min (13.6)"
+                      value={minO2}
+                      onChange={(e) => setMinO2(e.target.value ? Number(e.target.value) : '')}
+                      className="w-1/2 glass-input rounded-md px-2 py-1.5 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                    />
+                    <span className="text-space-textMuted">–</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      placeholder="Max (22.2)"
+                      value={maxO2}
+                      onChange={(e) => setMaxO2(e.target.value ? Number(e.target.value) : '')}
+                      className="w-1/2 glass-input rounded-md px-2 py-1.5 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                    />
+                  </div>
+                </div>
+
+                {/* Airflow Velocity Limits */}
+                <div>
+                  <label className="block text-space-textMuted mb-1 font-medium">Airspeed (cm/s)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="1"
+                      placeholder="Min (1)"
+                      value={minVelocity}
+                      onChange={(e) => setMinVelocity(e.target.value ? Number(e.target.value) : '')}
+                      className="w-1/2 glass-input rounded-md px-2 py-1.5 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                    />
+                    <span className="text-space-textMuted">–</span>
+                    <input
+                      type="number"
+                      step="1"
+                      placeholder="Max (40)"
+                      value={maxVelocity}
+                      onChange={(e) => setMaxVelocity(e.target.value ? Number(e.target.value) : '')}
+                      className="w-1/2 glass-input rounded-md px-2 py-1.5 text-space-textMain focus:outline-none focus:border-cyan-plasma"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Scientific Disclaimer Banner */}
+          <div className="bg-amber-combustion/10 border border-amber-combustion/30 rounded-xl p-3 flex items-start gap-3 text-xs text-amber-combustion/90">
+            <Info size={16} className="shrink-0 mt-0.5 text-amber-combustion" />
+            <div>
+              <span className="font-semibold text-amber-combustion">Scientific Integrity Notice: </span>
+              {matchData?.disclaimer ||
+                'Relevance scores indicate condition parameter matching, NOT fire-risk probabilities. All records and quotes come directly from NASA/TM-20210011385.'}
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {matchError && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-3">
+              <AlertTriangle size={18} />
+              <span>{matchError}</span>
+            </div>
+          )}
+
+          {/* Matched Experiments Results List */}
+          {matchLoading ? (
+            <div className="py-16 text-center text-space-textMuted space-y-3">
+              <RefreshCw size={28} className="animate-spin mx-auto text-cyan-plasma" />
+              <p className="text-sm">Matching against 126 verified NASA flight records...</p>
+            </div>
+          ) : matchData && matchData.results.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between text-xs text-space-textMuted px-1">
+                <span>
+                  Showing {matchData.returned_count} of {matchData.total_found} verified flight experiments
+                </span>
+                <span>Sorted by explainable condition match score</span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                {matchData.results.map((exp) => {
+                  const isSelected = selectedTestIds.includes(exp.test_id.toUpperCase());
+                  return (
+                    <div
+                      key={exp.test_id}
+                      className={`bg-cosmic-surface/90 border rounded-xl p-5 transition-all backdrop-blur-md shadow-card ${
+                        isSelected
+                          ? 'border-cyan-plasma ring-1 ring-cyan-plasma/30 bg-cosmic-surface'
+                          : 'border-cosmic-border hover:border-cosmic-border/90'
+                      }`}
+                    >
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                        {/* Header details */}
+                        <div className="space-y-2 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-display font-bold text-lg text-cyan-plasma">
+                              Test {exp.test_id}
+                            </span>
+                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-cosmic-card border border-cosmic-border text-space-textMain font-medium">
+                              {exp.material_category}
+                            </span>
+                            <span
+                              className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
+                                exp.flame_behavior === 'Extinguished / Quenched'
+                                  ? 'bg-amber-combustion/10 border-amber-combustion/30 text-amber-combustion'
+                                  : exp.flame_behavior === 'Sustained Flame'
+                                  ? 'bg-space-green/10 border-space-green/30 text-space-green'
+                                  : 'bg-space-blue/10 border-space-blue/30 text-space-blue'
+                              }`}
+                            >
+                              {exp.flame_behavior}
+                            </span>
+                            {exp.is_exact_match ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-space-green/10 border border-space-green/30 text-space-green flex items-center gap-1">
+                                <CheckCircle2 size={11} />
+                                <span>Exact Condition Match</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-cosmic-card border border-cosmic-border text-space-textMuted">
+                                Partial Match
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-space-textMuted grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                            <div>
+                              <span className="text-space-textMuted/70">Fuel: </span>
+                              <span className="text-space-textMain font-medium">{exp.fuel_material}</span>
+                            </div>
+                            <div>
+                              <span className="text-space-textMuted/70">Flow Vector: </span>
+                              <span className="text-space-textMain font-medium">{exp.flow_configuration}</span>
+                            </div>
+                            <div>
+                              <span className="text-space-textMuted/70">Airflow: </span>
+                              <span className="text-space-textMain font-medium">
+                                {exp.air_velocity_cms || 'Unrecorded'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-space-textMuted/70">Initial O₂: </span>
+                              <span className="text-space-textMain font-medium">
+                                {exp.calibrated_initial_o2_pct !== null ? `${exp.calibrated_initial_o2_pct}%` : 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Match Score & Action */}
+                        <div className="flex md:flex-col items-center md:items-end justify-between gap-3 shrink-0">
+                          <div className="text-right">
+                            <div className="text-xs text-space-textMuted">Condition Match</div>
+                            <div className="font-display font-bold text-xl text-cyan-plasma">
+                              {Math.round(exp.total_match_score * 100)}%
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => toggleTestSelection(exp.test_id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                              isSelected
+                                ? 'bg-cyan-plasma text-cosmic-bg shadow-glow-cyan'
+                                : 'bg-cosmic-card hover:bg-cosmic-card/80 border border-cosmic-border text-space-textMain'
+                            }`}
+                          >
+                            {isSelected ? <CheckCircle2 size={13} /> : <Plus size={13} />}
+                            <span>{isSelected ? 'In Comparison Queue' : 'Add to Compare'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Transparent Match Reasons */}
+                      <div className="mt-4 pt-3 border-t border-cosmic-border/60 space-y-2">
+                        <div className="text-xs font-semibold text-space-textMain flex items-center gap-1.5">
+                          <CheckCircle2 size={13} className="text-cyan-plasma" />
+                          <span>Why this experiment matched:</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {exp.match_reasons.map((reason, idx) => (
+                            <span
+                              key={idx}
+                              className="text-xs px-2.5 py-1 rounded bg-cosmic-card border border-cosmic-border text-space-textMuted"
+                            >
+                              • {reason}
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Missing fields notice */}
+                        {exp.missing_fields.length > 0 && (
+                          <div className="text-xs text-amber-combustion/80 flex items-center gap-1 pt-1">
+                            <Info size={12} className="shrink-0" />
+                            <span>Uninstrumented in this run: {exp.missing_fields.join(', ')}</span>
+                          </div>
+                        )}
+
+                        {/* NASA Astronaut Logbook Quote */}
+                        {exp.observations && (
+                          <div className="mt-2 p-2.5 rounded-lg bg-cosmic-card/60 border border-cosmic-border/40 text-xs text-space-textMuted italic">
+                            <span className="font-semibold not-italic text-space-textMain">NASA Astronaut Log: </span>
+                            "{exp.observations}"
+                          </div>
+                        )}
+
+                        {/* Provenance reference */}
+                        <div className="flex items-center justify-between text-[11px] text-space-textMuted/70 pt-1">
+                          <span>Reference: {exp.source_reference}</span>
+                          {exp.report_page_hint && <span className="text-cyan-plasma/80">{exp.report_page_hint}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-cosmic-surface/60 border border-cosmic-border rounded-xl p-12 text-center text-space-textMuted space-y-2">
+              <Search size={32} className="mx-auto text-space-textMuted/50" />
+              <p className="text-sm font-medium text-space-textMain">No flight experiments matched all criteria</p>
+              <p className="text-xs">Try broadening your parameter ranges or clear specific filters.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 2: SCIENTIFIC COMPARISON ENGINE & 4-TIER INSIGHT */}
+      {activeTab === 'comparison' && (
+        <div className="space-y-8 animate-fade-in">
+          {/* Quick Benchmark Comparison Presets */}
+          <div className="bg-cosmic-surface/90 border border-cosmic-border rounded-xl p-4 backdrop-blur-md shadow-card space-y-3">
+            <div className="flex items-center justify-between text-xs border-b border-cosmic-border/60 pb-2">
+              <span className="font-bold text-space-textMain flex items-center gap-1.5">
+                <Sparkles size={14} className="text-cyan-plasma" />
+                <span>Multi-Dataset Scientific Benchmark Presets:</span>
+              </span>
+              <span className="text-space-textMuted text-[11px]">Instant side-by-side analysis for space-safety researchers</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold text-cyan-plasma uppercase tracking-wider">BASS-II Solid Fuel:</span>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => loadPresetComparison(['T1', 'T2'], 'bass_ii')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-cosmic-card hover:bg-cyan-plasma/10 border border-cosmic-border hover:border-cyan-plasma/40 text-space-textMain transition-all"
+                  >
+                    ⚡ T1 vs T2 (SIBAL Airspeed Comparison)
+                  </button>
+                  <button
+                    onClick={() => loadPresetComparison(['T1', 'P1'], 'bass_ii')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-amber-combustion/10 hover:bg-amber-combustion/20 border border-amber-combustion/30 text-amber-combustion transition-all"
+                  >
+                    ⚠️ T1 vs P1 (Cross-Material Warning Demo)
+                  </button>
+                  <button
+                    onClick={() => loadPresetComparison(['B2', 'B4', 'B7'], 'bass_ii')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-cosmic-card hover:bg-cyan-plasma/10 border border-cosmic-border hover:border-cyan-plasma/40 text-space-textMain transition-all"
+                  >
+                    🔬 B2 vs B4 vs B7 (PMMA Film Thicknesses)
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold text-space-blue uppercase tracking-wider">FLEX Droplet Results:</span>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => loadPresetComparison(['1', '2'], 'flex_results')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-cosmic-card hover:bg-space-blue/10 border border-cosmic-border hover:border-space-blue/40 text-space-textMain transition-all"
+                  >
+                    💧 Tests #1 vs #2 (Methanol Droplets)
+                  </button>
+                  <button
+                    onClick={() => loadPresetComparison(['114', '115'], 'flex_results')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 transition-all"
+                  >
+                    ⚠️ Tests #114 vs #115 (0.0 mmHg Anomaly Audit)
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold text-amber-combustion uppercase tracking-wider">Cross-Investigation:</span>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => loadPresetComparison(['T1', '1'], 'cross_investigation')}
+                    className="text-left px-2.5 py-1.5 rounded-md bg-amber-combustion/10 hover:bg-amber-combustion/20 border border-amber-combustion/30 text-amber-combustion transition-all"
+                  >
+                    ⚡ BASS T1 vs FLEX #1 (Solid vs Droplet Physics)
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Investigation Selector & Active Comparison Queue Bar */}
+          <div className="bg-cosmic-surface/90 border border-cosmic-border p-4 rounded-xl backdrop-blur-md shadow-card space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cosmic-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-space-textMuted uppercase tracking-wider">
+                  Target Investigation:
+                </span>
+                <div className="inline-flex rounded-lg bg-cosmic-card p-0.5 border border-cosmic-border text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComparisonInvestigation('bass_ii');
+                      executeComparison(selectedTestIds, 'bass_ii');
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition-all ${
+                      comparisonInvestigation === 'bass_ii'
+                        ? 'bg-cyan-plasma text-cosmic-bg font-semibold shadow-glow-cyan'
+                        : 'text-space-textMuted hover:text-space-textMain'
+                    }`}
+                  >
+                    BASS-II (Solid Flame)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComparisonInvestigation('flex_results');
+                      executeComparison(selectedTestIds, 'flex_results');
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition-all ${
+                      comparisonInvestigation === 'flex_results'
+                        ? 'bg-cyan-plasma text-cosmic-bg font-semibold shadow-glow-cyan'
+                        : 'text-space-textMuted hover:text-space-textMain'
+                    }`}
+                  >
+                    FLEX Results (Droplet)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComparisonInvestigation('cross_investigation');
+                      executeComparison(selectedTestIds, 'cross_investigation');
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition-all ${
+                      comparisonInvestigation === 'cross_investigation'
+                        ? 'bg-cyan-plasma text-cosmic-bg font-semibold shadow-glow-cyan'
+                        : 'text-space-textMuted hover:text-space-textMain'
+                    }`}
+                  >
+                    Cross-Investigation
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Add Custom Test ID */}
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Add Test ID (e.g. 114, T1)..."
+                  value={customTestId}
+                  onChange={(e) => setCustomTestId(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addCustomTestId()}
+                  className="glass-input rounded-md px-2.5 py-1 text-xs text-space-textMain placeholder-space-textMuted focus:outline-none focus:border-cyan-plasma w-44"
+                />
+                <button
+                  onClick={addCustomTestId}
+                  disabled={!customTestId.trim()}
+                  className="px-2.5 py-1 rounded-md bg-cyan-plasma/20 hover:bg-cyan-plasma/30 border border-cyan-plasma/40 text-cyan-plasma text-xs font-semibold disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-space-textMuted uppercase tracking-wider">
+                  Comparing ({selectedTestIds.length}):
+                </span>
+                {selectedTestIds.map((tid) => (
+                  <span
+                    key={tid}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-cyan-plasma/10 border border-cyan-plasma/30 text-cyan-plasma font-display font-bold text-xs"
+                  >
+                    <span>Test {tid}</span>
+                    <button
+                      onClick={() => toggleTestSelection(tid)}
+                      className="hover:text-red-400 text-cyan-plasma/70 transition-all"
+                      title="Remove from comparison"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => executeComparison()}
+                  disabled={selectedTestIds.length < 2 || compareLoading}
+                  className="px-4 py-2 rounded-lg bg-cyan-plasma hover:bg-cyan-plasma/90 text-cosmic-bg text-xs font-semibold shadow-glow-cyan flex items-center gap-1.5 transition-all disabled:opacity-40"
+                >
+                  {compareLoading ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  <span>Re-evaluate Comparison</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedTestIds([]);
+                    setCompareData(null);
+                  }}
+                  className="px-3 py-2 rounded-lg bg-cosmic-card hover:bg-red-500/10 border border-cosmic-border hover:border-red-500/30 text-space-textMuted hover:text-red-400 text-xs transition-all"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Comparison Loading / Error */}
+          {compareLoading && (
+            <div className="py-20 text-center text-space-textMuted space-y-3">
+              <RefreshCw size={32} className="animate-spin mx-auto text-cyan-plasma" />
+              <p className="text-sm">Synthesizing side-by-side evidence & checking compatibility rules...</p>
+            </div>
+          )}
+
+          {compareError && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-3">
+              <AlertTriangle size={18} />
+              <span>{compareError}</span>
+            </div>
+          )}
+
+          {/* Comparison Content */}
+          {!compareLoading && compareData && (
+            <div className="space-y-8 animate-fade-in">
+              {/* Scientific Incompatibility Warnings */}
+              {compareData.incompatibility_warnings.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="font-display font-semibold text-sm text-space-textMain flex items-center gap-2">
+                    <AlertTriangle size={16} className="text-amber-combustion" />
+                    <span>Scientific Compatibility Diagnostics & Physical Caveats</span>
+                  </h3>
+                  <div className="grid grid-cols-1 gap-2.5">
+                    {compareData.incompatibility_warnings.map((warn, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3.5 rounded-xl border flex items-start gap-3 text-xs leading-relaxed ${
+                          warn.severity === 'High'
+                            ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                            : warn.severity === 'Moderate'
+                            ? 'bg-amber-combustion/10 border-amber-combustion/30 text-amber-200'
+                            : 'bg-space-blue/10 border-space-blue/30 text-space-blue'
+                        }`}
+                      >
+                        <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold uppercase tracking-wider text-[11px] mr-2 px-1.5 py-0.5 rounded bg-black/30">
+                            [{warn.severity}] {warn.category}
+                          </span>
+                          <span>{warn.message}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Side-by-Side Condition & Measured Outcomes Table */}
+              <div className="bg-cosmic-surface/90 border border-cosmic-border rounded-xl p-5 backdrop-blur-md shadow-card space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display font-semibold text-base text-space-textMain flex items-center gap-2">
+                    <Scale size={18} className="text-cyan-plasma" />
+                    <span>Side-by-Side Experimental Evidence Matrix</span>
+                  </h3>
+                  <span className="text-xs text-space-textMuted">
+                    {comparisonInvestigation === 'bass_ii'
+                      ? 'NASA BASS-II Flight Telemetry'
+                      : comparisonInvestigation === 'flex_results'
+                      ? 'NASA PSI-69 FLEX Flight Results'
+                      : 'Cross-Investigation Multi-Dataset Telemetry'}
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-cosmic-border text-space-textMuted uppercase tracking-wider">
+                        <th className="py-2.5 px-3">Experimental Parameter</th>
+                        {compareData.experiments.map((exp) => (
+                          <th key={exp.test_id} className="py-2.5 px-3 font-display font-bold text-cyan-plasma text-sm">
+                            Test {exp.test_id}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-cosmic-border/60">
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Dataset / Investigation</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-semibold text-space-textMain">
+                            <span className="px-2 py-0.5 rounded bg-cosmic-card border border-cosmic-border text-[11px]">
+                              {exp.investigation || 'BASS-II'}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Fuel / Material</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-semibold text-space-textMain">
+                            {exp.fuel || exp.fuel_material || 'Unknown'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Material Category / Geometry</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 text-space-textMain">
+                            {exp.material_category ||
+                              (exp.investigation?.includes('FLEX') ? 'Free / Fiber Droplet' : 'Solid Fuel Sample')}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Flow Geometry & Velocity</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono text-cyan-plasma font-semibold">
+                            {exp.air_velocity_cms
+                              ? `${exp.flow_configuration || 'Opposed'} (${exp.air_velocity_cms})`
+                              : exp.investigation?.includes('FLEX')
+                              ? 'Quiescent Droplet (0.0 cm/s)'
+                              : exp.flow_configuration || 'Unrecorded'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Ambient Pressure</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono">
+                            {exp.ambient_pressure_mmhg !== undefined && exp.ambient_pressure_mmhg !== null ? (
+                              exp.ambient_pressure_mmhg === 0.0 || exp.is_anomalous ? (
+                                <span className="px-2 py-0.5 rounded bg-red-500/20 border border-red-500/40 text-red-300 font-bold inline-block">
+                                  0.0 mmHg ⚠️ (Flagged Anomaly: Source Discrepancy)
+                                </span>
+                              ) : (
+                                `${exp.ambient_pressure_mmhg} mmHg (${exp.ambient_pressure_atm?.toFixed(3)} atm)`
+                              )
+                            ) : (
+                              '~1.0 atm (Cabin Air nominal)'
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Initial Droplet Diameter (d₀)</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono">
+                            {exp.droplet_initial_diameter_mm !== null && exp.droplet_initial_diameter_mm !== undefined
+                              ? `${exp.droplet_initial_diameter_mm} mm`
+                              : 'N/A (Solid Sample)'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Extinction Droplet Diameter (d_ext)</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono">
+                            {exp.visible_flame_extinction_diameter_mm !== null &&
+                            exp.visible_flame_extinction_diameter_mm !== undefined
+                              ? `${exp.visible_flame_extinction_diameter_mm} mm`
+                              : 'N/A'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Burning Rate (K)</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono font-semibold text-cyan-plasma">
+                            {exp.burning_rate_mm2_s !== null && exp.burning_rate_mm2_s !== undefined ? (
+                              `${exp.burning_rate_mm2_s} mm²/s`
+                            ) : exp.investigation?.includes('FLEX') ? (
+                              <span className="text-amber-combustion font-medium">Unrecorded / Missing (Not Substituted)</span>
+                            ) : (
+                              'N/A (Linear Solid Regression)'
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Burn Time (t_b)</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono">
+                            {exp.burn_time_s !== null && exp.burn_time_s !== undefined
+                              ? `${exp.burn_time_s} s`
+                              : 'N/A'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Initial Oxygen / Consumed</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 font-mono">
+                            {exp.calibrated_initial_o2_pct !== null && exp.calibrated_initial_o2_pct !== undefined
+                              ? `${exp.calibrated_initial_o2_pct}% vol (Δ: ${exp.delta_o2_pct ? exp.delta_o2_pct.toFixed(2) + '%' : 'N/A'})`
+                              : exp.investigation?.includes('FLEX')
+                              ? 'See Protocol (Standard 21% O₂)'
+                              : 'N/A'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Flame Outcome / End State</td>
+                        {compareData.experiments.map((exp) => {
+                          const outcome = exp.test_end_outcome || exp.flame_behavior || 'Unspecified';
+                          const isExt = outcome.includes('Extinguish') || outcome.includes('Extinction');
+                          const isDisr = outcome.includes('Disruption');
+                          const isSust = outcome.includes('Sustained') || outcome.includes('Completion');
+                          return (
+                            <td key={exp.test_id} className="py-2.5 px-3">
+                              <span
+                                className={`px-2 py-0.5 rounded font-semibold text-[11px] ${
+                                  isExt
+                                    ? 'bg-amber-combustion/10 text-amber-combustion border border-amber-combustion/30'
+                                    : isDisr
+                                    ? 'bg-red-500/10 text-red-300 border border-red-500/30'
+                                    : isSust
+                                    ? 'bg-space-green/10 text-space-green border border-space-green/30'
+                                    : 'bg-space-blue/10 text-space-blue border border-space-blue/30'
+                                }`}
+                              >
+                                {outcome}
+                              </span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 text-space-textMuted font-medium">Flight Notes / Telemetry ID</td>
+                        {compareData.experiments.map((exp) => (
+                          <td key={exp.test_id} className="py-2.5 px-3 text-space-textMuted italic max-w-xs">
+                            "{exp.observations || exp.flex_identifier || 'NASA flight record'}"
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 4-TIER EVIDENCE-TO-INSIGHT SYNTHESIS */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-cosmic-border pb-3">
+                  <div>
+                    <h2 className="font-display font-bold text-xl text-space-textMain flex items-center gap-2">
+                      <Layers size={20} className="text-cyan-plasma" />
+                      <span>Evidence-to-Insight Synthesis</span>
+                    </h2>
+                    <p className="text-xs text-space-textMuted">
+                      Strict 4-tier epistemological separation: Observations → Calculations → Interpretation → Scientific Limitations
+                    </p>
+                  </div>
+
+                  <div className="text-xs px-3 py-1 rounded-full bg-cosmic-card border border-cosmic-border text-space-textMuted flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-space-green animate-pulse"></span>
+                    <span>Synthesis Mode: {compareData.synthesis_mode === 'live_llm' ? 'Live Gemini AI' : 'Offline Grounded Verification'}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* TIER 1: OBSERVED EVIDENCE */}
+                  <div className="bg-cosmic-surface/90 border border-space-blue/30 rounded-xl p-5 backdrop-blur-md shadow-card space-y-3">
+                    <div className="flex items-center gap-2 text-space-blue font-display font-semibold text-sm uppercase tracking-wider">
+                      <span className="w-6 h-6 rounded-md bg-space-blue/20 flex items-center justify-center text-xs">1</span>
+                      <span>Observed Evidence (Direct Flight Telemetry)</span>
+                    </div>
+                    <p className="text-[11px] text-space-textMuted">
+                      Empirical measurements recorded by NASA sensors and astronaut crew logbook notes:
+                    </p>
+                    <ul className="space-y-2 text-xs text-space-textMain leading-relaxed">
+                      {compareData.evidence_to_insight.observed_evidence.map((point, idx) => (
+                        <li key={idx} className="p-2.5 rounded-lg bg-cosmic-card/70 border border-cosmic-border/50">
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* TIER 2: CALCULATED RESULTS */}
+                  <div className="bg-cosmic-surface/90 border border-cyan-plasma/30 rounded-xl p-5 backdrop-blur-md shadow-card space-y-3">
+                    <div className="flex items-center gap-2 text-cyan-plasma font-display font-semibold text-sm uppercase tracking-wider">
+                      <span className="w-6 h-6 rounded-md bg-cyan-plasma/20 flex items-center justify-center text-xs">2</span>
+                      <span>Calculated Results (Verified Derivations)</span>
+                    </div>
+                    <p className="text-[11px] text-space-textMuted">
+                      Values derived directly from verified measurements using stoichometric & physical formulas:
+                    </p>
+                    <ul className="space-y-2 text-xs text-space-textMain leading-relaxed">
+                      {compareData.evidence_to_insight.calculated_results.map((point, idx) => (
+                        <li key={idx} className="p-2.5 rounded-lg bg-cosmic-card/70 border border-cosmic-border/50">
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* TIER 3: SCIENTIFIC INTERPRETATION */}
+                  <div className="bg-cosmic-surface/90 border border-amber-combustion/30 rounded-xl p-5 backdrop-blur-md shadow-card space-y-3">
+                    <div className="flex items-center gap-2 text-amber-combustion font-display font-semibold text-sm uppercase tracking-wider">
+                      <span className="w-6 h-6 rounded-md bg-amber-combustion/20 flex items-center justify-center text-xs">3</span>
+                      <span>Scientific Interpretation (Combustion Physics)</span>
+                    </div>
+                    <p className="text-[11px] text-space-textMuted">
+                      What these observations suggest according to microgravity combustion theory:
+                    </p>
+                    <ul className="space-y-2 text-xs text-space-textMain leading-relaxed">
+                      {compareData.evidence_to_insight.scientific_interpretation.map((point, idx) => (
+                        <li key={idx} className="p-2.5 rounded-lg bg-cosmic-card/70 border border-cosmic-border/50">
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* TIER 4: LIMITATIONS & UNCERTAINTIES */}
+                  <div className="bg-cosmic-surface/90 border border-red-500/30 rounded-xl p-5 backdrop-blur-md shadow-card space-y-3">
+                    <div className="flex items-center gap-2 text-red-400 font-display font-semibold text-sm uppercase tracking-wider">
+                      <span className="w-6 h-6 rounded-md bg-red-500/20 flex items-center justify-center text-xs">4</span>
+                      <span>Scientific Limitations & Unproven Causality</span>
+                    </div>
+                    <p className="text-[11px] text-space-textMuted">
+                      What cannot be concluded from available evidence (preventing unsupported claims):
+                    </p>
+                    <ul className="space-y-2 text-xs text-space-textMain leading-relaxed">
+                      {compareData.evidence_to_insight.limitations_and_uncertainties.map((point, idx) => (
+                        <li key={idx} className="p-2.5 rounded-lg bg-cosmic-card/70 border border-cosmic-border/50">
+                          ⚠️ {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* NASA Document Evidence Provenance Citations */}
+              {compareData.citations.length > 0 && (
+                <div className="bg-cosmic-surface/90 border border-cosmic-border rounded-xl p-5 backdrop-blur-md shadow-card space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-display font-semibold text-sm text-space-textMain flex items-center gap-2">
+                      <BookOpen size={16} className="text-cyan-plasma" />
+                      <span>Supporting NASA Technical Literature Citations</span>
+                    </h3>
+                    <span className="text-xs text-space-textMuted">NASA/TM-20210011385</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {compareData.citations.map((cit, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-cosmic-card border border-cosmic-border rounded-lg p-3 text-xs space-y-2 flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                cit.dataset === 'flex_results'
+                                  ? 'bg-space-blue/10 border-space-blue/30 text-space-blue'
+                                  : cit.dataset === 'flex_planned'
+                                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                                  : 'bg-cyan-plasma/10 border-cyan-plasma/30 text-cyan-plasma'
+                              }`}
+                            >
+                              {cit.dataset === 'flex_results'
+                                ? 'FLEX Results'
+                                : cit.dataset === 'flex_planned'
+                                ? 'FLEX Planned'
+                                : 'BASS-II'}
+                            </span>
+                            {cit.record_id && (
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cosmic-surface border border-cosmic-border text-space-textMuted">
+                                {cit.record_id}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-semibold text-space-textMain truncate">{cit.source_title}</div>
+                          <div className="text-[11px] text-space-textMuted mt-0.5">
+                            {cit.section || 'General Discussion'} {cit.page_num ? `(Page ${cit.page_num})` : ''}
+                          </div>
+                          <p className="text-space-textMuted text-[11px] mt-2 line-clamp-3 italic">
+                            "{cit.content.slice(0, 160)}..."
+                          </p>
+                        </div>
+                        <div className="pt-2 border-t border-cosmic-border/50 flex items-center justify-between text-[11px]">
+                          <a
+                            href={cit.doi_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-cyan-plasma hover:underline flex items-center gap-1"
+                          >
+                            <span>DOI 10.60555</span>
+                            <ExternalLink size={10} />
+                          </a>
+                          <span className="text-space-textMuted/70">Relevance: {Math.round((cit.score || 0) * 100)}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};

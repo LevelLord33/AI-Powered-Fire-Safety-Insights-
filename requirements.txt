@@ -1,0 +1,13 @@
+# Core Web Dashboard Dependencies
+streamlit>=1.35.0
+plotly>=5.20.0
+pandas>=2.0.0
+
+# Document Processing & Search Retrieval
+pymupdf>=1.24.0
+scikit-learn>=1.4.0
+requests>=2.31.0
+
+# Backend REST API
+fastapi>=0.110.0
+uvicorn>=0.29.0

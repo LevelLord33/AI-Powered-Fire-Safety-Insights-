@@ -1,0 +1,246 @@
+/**
+ * TypeScript Data Models matching the FastAPI backend schemas
+ */
+
+export interface HealthData {
+  status: string;
+  service: string;
+  active_model?: string | null;
+  ai_mode: 'live_llm' | 'offline_synthesis';
+  total_experiments: number;
+  indexed_passages: number;
+  platform: string;
+  timestamp: string;
+}
+
+export interface DatasetSummary {
+  total_records: number;
+  total_columns: number;
+  unique_pis: number;
+  unique_materials: number;
+  min_o2: number;
+  max_o2: number;
+  avg_o2: number;
+  max_co_ppm?: number | null;
+  hardware: string;
+  platform: string;
+  investigation: string;
+  technical_report: string;
+  material_categories: string[];
+  flow_configurations: string[];
+  pis_list: string[];
+}
+
+export interface ExperimentRecord {
+  test_id: string;
+  as_run_num?: number | null;
+  principal_investigator?: string | null;
+  date_gmt?: string | null;
+  time_range?: string | null;
+  sample_id?: string | null;
+  fuel_material?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  flow_restrictor?: number | null;
+  fan_setting?: string | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  initial_o2_pct?: number | null;
+  final_o2_pct?: number | null;
+  delta_o2_pct?: number | null;
+  initial_co2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  initial_co_ppm?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  observations?: string | null;
+}
+
+export interface ExperimentListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  experiments: ExperimentRecord[];
+}
+
+export interface ExtinctionPoint {
+  test_id: string;
+  calibrated_initial_o2_pct?: number | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  fuel_material?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  flame_behavior: 'Extinguished / Quenched' | 'Sustained Flame' | 'Observation Recorded';
+  observations?: string | null;
+}
+
+export interface ExtinctionBoundaryResponse {
+  total_points: number;
+  summary: {
+    total_analyzed_tests: number;
+    quenched_count: number;
+    sustained_count: number;
+    other_observations_count: number;
+    critical_oxygen_limit_note: string;
+  };
+  points: ExtinctionPoint[];
+}
+
+export interface GasCorrelationRecord {
+  test_id: string;
+  material_category: string;
+  flow_configuration: string;
+  calibrated_initial_o2_pct?: number | null;
+  delta_o2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  air_velocity_numeric?: number | null;
+}
+
+export interface GasCorrelationsResponse {
+  total_records: number;
+  correlations: {
+    delta_o2_vs_delta_co2?: number | null;
+    initial_o2_vs_final_co_ppm?: number | null;
+    air_velocity_vs_delta_o2?: number | null;
+  };
+  records: GasCorrelationRecord[];
+}
+
+export interface CitationSource {
+  chunk_id?: string | null;
+  source_file: string;
+  source_title: string;
+  source_type: string;
+  page_num?: number | string | null;
+  section?: string | null;
+  url: string;
+  doi_url: string;
+  content: string;
+  score?: number | null;
+}
+
+export interface AssistantResponse {
+  answer: string;
+  mode: 'live_llm' | 'local_evidence_synthesis' | 'local_evidence_synthesis_fallback' | 'no_evidence';
+  model_name?: string | null;
+  has_evidence: boolean;
+  disclaimer: string;
+  fallback_reason?: string | null;
+  citations: CitationSource[];
+}
+
+export interface InventoryItem {
+  name: string;
+  path: string;
+  size_bytes: number;
+  category: string;
+  verified: boolean;
+  description: string;
+}
+
+export interface InventoryResponse {
+  indexed_passages: number;
+  total_experiments: number;
+  technical_report: string;
+  doi: string;
+  psi_repository_url: string;
+  files: InventoryItem[];
+}
+
+// -----------------------------------------------------------------------------
+// Phase 7: Evidence-to-Insight Engine Types
+// -----------------------------------------------------------------------------
+export interface ExperimentMatchCriteria {
+  query?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  min_initial_o2?: number | null;
+  max_initial_o2?: number | null;
+  min_air_velocity?: number | null;
+  max_air_velocity?: number | null;
+  flame_behavior?: string | null;
+  limit?: number;
+}
+
+export interface MatchedExperimentItem {
+  test_id: string;
+  fuel_material: string;
+  material_category: string;
+  flow_configuration: string;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  final_co_ppm?: number | null;
+  delta_o2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  flame_behavior: string;
+  observations?: string | null;
+  total_match_score: number;
+  is_exact_match: boolean;
+  match_reasons: string[];
+  missing_fields: string[];
+  source_reference: string;
+  report_page_hint?: string | null;
+}
+
+export interface ExperimentMatchResponse {
+  total_found: number;
+  returned_count: number;
+  query_echo?: string | null;
+  scoring_criteria_explanation: string;
+  disclaimer: string;
+  results: MatchedExperimentItem[];
+}
+
+export interface ComparedExperimentData {
+  test_id: string;
+  fuel_material: string;
+  material_category: string;
+  flow_configuration: string;
+  flow_restrictor?: string | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  initial_co2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  initial_co_ppm?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  delta_o2_pct?: number | null;
+  flame_behavior: string;
+  observations?: string | null;
+}
+
+export interface ComparisonWarning {
+  category: string;
+  severity: 'High' | 'Moderate' | 'Informational';
+  message: string;
+}
+
+export interface EvidenceToInsightSection {
+  observed_evidence: string[];
+  calculated_results: string[];
+  scientific_interpretation: string[];
+  limitations_and_uncertainties: string[];
+}
+
+export interface ExperimentComparisonResponse {
+  test_ids: string[];
+  experiments: ComparedExperimentData[];
+  incompatibility_warnings: ComparisonWarning[];
+  evidence_to_insight: EvidenceToInsightSection;
+  citations: CitationSource[];
+  synthesis_mode: string;
+  disclaimer: string;
+}

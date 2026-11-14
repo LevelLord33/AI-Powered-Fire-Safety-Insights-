@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.env
+.env.local
+.env.*.local
+venv/
+.venv/
+env/
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+frontend/.vite/
+
+# Streamlit secrets & local config
+.streamlit/secrets.toml
+
+# Large raw video files (keep small sample videos or documentation if needed)
+data/raw/*.mp4
+data/raw/*.avi
+data/raw/*.mov
+data/raw/*.zip
+
+# Operating System
+.DS_Store
+Thumbs.db

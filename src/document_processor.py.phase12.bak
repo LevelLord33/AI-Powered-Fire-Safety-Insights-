@@ -1,0 +1,382 @@
+"""
+Document processing and indexing module for NASA BASS-II research materials.
+Extracts text from PDF, metadata text files, inventory markdown, and experimental CSV records.
+Preserves page numbers, source filenames, record IDs, and official URLs.
+"""
+
+import json
+import logging
+from pathlib import Path
+import re
+import zipfile
+import pandas as pd
+import pymupdf
+
+logger = logging.getLogger(__name__)
+
+NASA_PSI_URL = "https://psi.nasa.gov/physci/repo/data/investigations/PSI-25"
+NASA_DOI_URL = "https://doi.org/10.60555/4qc4-de67"
+
+
+def chunk_text(text, max_words=350, overlap_words=50):
+    """Split text into manageable overlapping passages."""
+    words = text.split()
+    if not words:
+        return []
+    if len(words) <= max_words:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = min(start + max_words, len(words))
+        chunk_words = words[start:end]
+        chunks.append(" ".join(chunk_words))
+        if end >= len(words):
+            break
+        start += max_words - overlap_words
+    return chunks
+
+
+class DocumentProcessor:
+    """Extracts, structures, and chunks NASA documents for evidence-based search."""
+
+    def __init__(self, workspace_root=None):
+        if workspace_root is None:
+            self.root = Path(__file__).resolve().parent.parent
+        else:
+            self.root = Path(workspace_root)
+
+        self.pdf_path = self.root / "data" / "docs" / "bass_ii_summary_report.pdf"
+        self.zip_path = (
+            self.root
+            / "data"
+            / "raw"
+            / "PSI-25_metadata_PSI_metadata_PSI-101_BASS-II.zip"
+        )
+        self.metadata_txt_path = (
+            self.root / "data" / "raw" / "metadata_extracted" / "i_Investigation.txt"
+        )
+        self.csv_path = self.root / "data" / "processed" / "bass_ii_experiments.csv"
+        self.inventory_path = self.root / "data_inventory.md"
+        self.index_cache_path = (
+            self.root / "data" / "processed" / "search_index.json"
+        )
+
+    def verify_sources(self):
+        """Check availability of each source document without pretending missing files exist."""
+        status = {
+            "pdf_available": self.pdf_path.exists()
+            and self.pdf_path.stat().st_size > 0,
+            "zip_available": self.zip_path.exists()
+            and self.zip_path.stat().st_size > 0,
+            "metadata_txt_available": self.metadata_txt_path.exists()
+            and self.metadata_txt_path.stat().st_size > 0,
+            "csv_available": self.csv_path.exists()
+            and self.csv_path.stat().st_size > 0,
+            "inventory_available": self.inventory_path.exists()
+            and self.inventory_path.stat().st_size > 0,
+        }
+        return status
+
+    def inspect_zip(self):
+        """Inspect the raw ZIP archive without modifying it."""
+        if not self.zip_path.exists():
+            return None
+        file_list = []
+        try:
+            with zipfile.ZipFile(self.zip_path, "r") as z:
+                for info in z.infolist():
+                    file_list.append(
+                        {
+                            "filename": info.filename,
+                            "file_size": info.file_size,
+                            "compress_size": info.compress_size,
+                        }
+                    )
+            return file_list
+        except Exception as e:
+            logger.error(f"Error inspecting ZIP {self.zip_path}: {e}")
+            return None
+
+    def process_pdf(self):
+        """Extract text from the 144-page BASS-II PDF report, preserving page numbers."""
+        if not self.pdf_path.exists():
+            logger.warning(f"PDF not found at {self.pdf_path}")
+            return []
+
+        chunks = []
+        try:
+            doc = pymupdf.open(self.pdf_path)
+            for page_index in range(len(doc)):
+                page_num = page_index + 1
+                page = doc[page_index]
+                text = page.get_text()
+                if not text or len(text.strip()) < 40:
+                    continue
+
+                # Clean whitespace
+                clean_t = re.sub(r"\s+", " ", text).strip()
+                passages = chunk_text(clean_t, max_words=320, overlap_words=40)
+
+                for p_idx, passage in enumerate(passages):
+                    chunks.append(
+                        {
+                            "chunk_id": f"pdf_p{page_num}_{p_idx+1}",
+                            "source_file": "bass_ii_summary_report.pdf",
+                            "source_title": (
+                                "NASA/TM-20210011385: BASS-II Summary Report"
+                            ),
+                            "source_type": "Official NASA Technical Report",
+                            "page_num": page_num,
+                            "section": f"Report Page {page_num}",
+                            "url": NASA_PSI_URL,
+                            "doi_url": NASA_DOI_URL,
+                            "content": passage,
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Failed to process PDF {self.pdf_path}: {e}")
+
+        return chunks
+
+    def process_metadata_text(self):
+        """Extract text from the ISA-Tab i_Investigation.txt metadata file."""
+        if not self.metadata_txt_path.exists():
+            return []
+
+        chunks = []
+        try:
+            text = self.metadata_txt_path.read_text(
+                encoding="utf-8", errors="replace"
+            )
+            # Group into study background, approach, and publications
+            lines = text.splitlines()
+            current_section = "General Investigation Metadata"
+            buffer = []
+
+            for line in lines:
+                if not line.strip():
+                    continue
+                if (
+                    line.startswith("INVESTIGATION")
+                    or line.startswith("STUDY")
+                    or line.startswith("ONTOLOGY")
+                ):
+                    if buffer:
+                        sec_text = "\n".join(buffer)
+                        passages = chunk_text(
+                            sec_text, max_words=300, overlap_words=30
+                        )
+                        for idx, p in enumerate(passages):
+                            chunks.append(
+                                {
+                                    "chunk_id": (
+                                        f"meta_{len(chunks)+1}_{idx+1}"
+                                    ),
+                                    "source_file": "i_Investigation.txt",
+                                    "source_title": (
+                                        "NASA PSI-25 ISA-Tab Investigation"
+                                        " Metadata"
+                                    ),
+                                    "source_type": (
+                                        "NASA ISA-Tab Repository Metadata"
+                                    ),
+                                    "page_num": None,
+                                    "section": current_section,
+                                    "url": NASA_PSI_URL,
+                                    "doi_url": NASA_DOI_URL,
+                                    "content": p,
+                                }
+                            )
+                        buffer = []
+                    current_section = line.strip()
+                buffer.append(line.strip())
+
+            if buffer:
+                sec_text = "\n".join(buffer)
+                for idx, p in enumerate(
+                    chunk_text(sec_text, max_words=300, overlap_words=30)
+                ):
+                    chunks.append(
+                        {
+                            "chunk_id": f"meta_{len(chunks)+1}_{idx+1}",
+                            "source_file": "i_Investigation.txt",
+                            "source_title": (
+                                "NASA PSI-25 ISA-Tab Investigation Metadata"
+                            ),
+                            "source_type": "NASA ISA-Tab Repository Metadata",
+                            "page_num": None,
+                            "section": current_section,
+                            "url": NASA_PSI_URL,
+                            "doi_url": NASA_DOI_URL,
+                            "content": p,
+                        }
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to process metadata {self.metadata_txt_path}: {e}"
+            )
+
+        return chunks
+
+    def process_experiments_csv(self):
+        """Convert structured CSV flight records into searchable evidence passages."""
+        if not self.csv_path.exists():
+            return []
+
+        chunks = []
+        try:
+            df = pd.read_csv(self.csv_path)
+
+            # 1. Overall dataset overview passage
+            total = len(df)
+            pis = ", ".join(df["principal_investigator"].unique())
+            min_o2 = df["calibrated_initial_o2_pct"].min()
+            max_o2 = df["calibrated_initial_o2_pct"].max()
+            max_co = df["final_co_ppm"].max()
+            configs = ", ".join(
+                [x for x in df["flow_configuration"].dropna().unique() if x]
+            )
+
+            overview_text = (
+                f"The verified NASA BASS-II experimental dataset contains"
+                f" {total} flight tests conducted on the International Space"
+                f" Station. Lead Principal Investigators include: {pis}."
+                f" Tested flow configurations include: {configs}. Ambient"
+                f" initial oxygen concentration ranged from {min_o2:.1f}% to"
+                f" {max_o2:.1f}% O2 vitiated with gaseous nitrogen. Post-burn"
+                f" toxic Carbon Monoxide (CO) levels reached up to"
+                f" {max_co:.0f} ppm during incomplete combustion."
+            )
+            chunks.append(
+                {
+                    "chunk_id": "csv_dataset_overview",
+                    "source_file": "bass_ii_experiments.csv",
+                    "source_title": (
+                        "NASA BASS-II Flight Test Matrix (Appendix A)"
+                    ),
+                    "source_type": "Structured Experimental Dataset",
+                    "page_num": "Pages 111-121",
+                    "section": "Overall Dataset Summary",
+                    "url": NASA_PSI_URL,
+                    "doi_url": NASA_DOI_URL,
+                    "content": overview_text,
+                }
+            )
+
+            # 2. Group tests by fuel material & PI to create granular, contextual passages
+            for (pi, mat), group in df.groupby(
+                ["principal_investigator", "fuel_material"]
+            ):
+                test_ids = group["test_id"].tolist()
+                avg_o2 = group["calibrated_initial_o2_pct"].mean()
+                obs_samples = [
+                    f"Test {row['test_id']}: {row['observations']}"
+                    for _, row in group.head(3).iterrows()
+                    if pd.notna(row["observations"]) and row["observations"]
+                ]
+                obs_text = " | ".join(obs_samples)
+
+                passage = (
+                    f"Flight tests conducted by {pi} using fuel material"
+                    f" '{mat}'. Total tests: {len(group)} (Test IDs:"
+                    f" {', '.join(test_ids[:10])}). Average initial oxygen"
+                    f" concentration was {avg_o2:.1f}% O2. Selected flight"
+                    f" observations: {obs_text}"
+                )
+                chunks.append(
+                    {
+                        "chunk_id": f"csv_mat_{len(chunks)+1}",
+                        "source_file": "bass_ii_experiments.csv",
+                        "source_title": (
+                            "NASA BASS-II Flight Test Matrix (Appendix A)"
+                        ),
+                        "source_type": "Structured Experimental Dataset",
+                        "page_num": "Pages 111-121",
+                        "section": f"Test Group: {pi} — {mat}",
+                        "url": NASA_PSI_URL,
+                        "doi_url": NASA_DOI_URL,
+                        "content": passage,
+                    }
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to process experiments CSV {self.csv_path}: {e}"
+            )
+
+        return chunks
+
+    def process_inventory_md(self):
+        """Extract synthesis and scientific conclusions from data_inventory.md."""
+        if not self.inventory_path.exists():
+            return []
+
+        chunks = []
+        try:
+            text = self.inventory_path.read_text(
+                encoding="utf-8", errors="replace"
+            )
+            sections = re.split(r"\n##\s+", text)
+            for idx, sec in enumerate(sections):
+                if not sec.strip():
+                    continue
+                header_match = re.match(r"^([^\n]+)", sec)
+                sec_title = (
+                    header_match.group(1).strip()
+                    if header_match
+                    else f"Section {idx}"
+                )
+                passages = chunk_text(sec, max_words=320, overlap_words=40)
+                for p_idx, p in enumerate(passages):
+                    chunks.append(
+                        {
+                            "chunk_id": f"inv_sec_{idx+1}_{p_idx+1}",
+                            "source_file": "data_inventory.md",
+                            "source_title": (
+                                "NASA BASS-II Data Inventory & Scientific"
+                                " Inspection Report"
+                            ),
+                            "source_type": "Verified Project Scientific Synthesis",
+                            "page_num": None,
+                            "section": sec_title,
+                            "url": NASA_PSI_URL,
+                            "doi_url": NASA_DOI_URL,
+                            "content": p,
+                        }
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to process inventory {self.inventory_path}: {e}"
+            )
+
+        return chunks
+
+    def build_or_load_index(self, force_rebuild=False):
+        """Build all chunks from verified NASA files or load from existing cache."""
+        if self.index_cache_path.exists() and not force_rebuild:
+            try:
+                with open(self.index_cache_path, "r", encoding="utf-8") as f:
+                    cached_chunks = json.load(f)
+                    if cached_chunks and len(cached_chunks) > 50:
+                        return cached_chunks
+            except Exception as e:
+                logger.warning(
+                    f"Could not load cached index, rebuilding: {e}"
+                )
+
+        all_chunks = []
+        all_chunks.extend(self.process_pdf())
+        all_chunks.extend(self.process_metadata_text())
+        all_chunks.extend(self.process_experiments_csv())
+        all_chunks.extend(self.process_inventory_md())
+
+        if all_chunks:
+            try:
+                self.index_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.index_cache_path, "w", encoding="utf-8") as f:
+                    json.dump(all_chunks, f, indent=2)
+            except Exception as e:
+                logger.error(f"Could not write cache file: {e}")
+
+        return all_chunks

@@ -1,0 +1,444 @@
+/**
+ * TypeScript Data Models matching the FastAPI backend schemas
+ */
+
+export interface HealthData {
+  status: string;
+  service: string;
+  active_model?: string | null;
+  ai_mode: 'live_llm' | 'offline_synthesis';
+  total_experiments: number;
+  indexed_passages: number;
+  platform: string;
+  timestamp: string;
+}
+
+export interface DatasetSummary {
+  total_records: number;
+  total_columns: number;
+  unique_pis: number;
+  unique_materials: number;
+  min_o2: number;
+  max_o2: number;
+  avg_o2: number;
+  max_co_ppm?: number | null;
+  hardware: string;
+  platform: string;
+  investigation: string;
+  technical_report: string;
+  material_categories: string[];
+  flow_configurations: string[];
+  pis_list: string[];
+}
+
+export interface ExperimentRecord {
+  test_id: string;
+  as_run_num?: number | null;
+  principal_investigator?: string | null;
+  date_gmt?: string | null;
+  time_range?: string | null;
+  sample_id?: string | null;
+  fuel_material?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  flow_restrictor?: number | null;
+  fan_setting?: string | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  initial_o2_pct?: number | null;
+  final_o2_pct?: number | null;
+  delta_o2_pct?: number | null;
+  initial_co2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  initial_co_ppm?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  observations?: string | null;
+}
+
+export interface ExperimentListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  experiments: ExperimentRecord[];
+}
+
+export interface ExtinctionPoint {
+  test_id: string;
+  calibrated_initial_o2_pct?: number | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  fuel_material?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  flame_behavior: 'Extinguished / Quenched' | 'Sustained Flame' | 'Observation Recorded';
+  observations?: string | null;
+}
+
+export interface ExtinctionBoundaryResponse {
+  total_points: number;
+  summary: {
+    total_analyzed_tests: number;
+    quenched_count: number;
+    sustained_count: number;
+    other_observations_count: number;
+    critical_oxygen_limit_note: string;
+  };
+  points: ExtinctionPoint[];
+}
+
+export interface GasCorrelationRecord {
+  test_id: string;
+  material_category: string;
+  flow_configuration: string;
+  calibrated_initial_o2_pct?: number | null;
+  delta_o2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  air_velocity_numeric?: number | null;
+}
+
+export interface GasCorrelationsResponse {
+  total_records: number;
+  correlations: {
+    delta_o2_vs_delta_co2?: number | null;
+    initial_o2_vs_final_co_ppm?: number | null;
+    air_velocity_vs_delta_o2?: number | null;
+  };
+  records: GasCorrelationRecord[];
+}
+
+export interface CitationSource {
+  chunk_id?: string | null;
+  source_file: string;
+  source_title: string;
+  source_type: string;
+  page_num?: number | string | null;
+  section?: string | null;
+  url: string;
+  doi_url: string;
+  content: string;
+  score?: number | null;
+}
+
+export interface AssistantResponse {
+  answer: string;
+  mode: 'live_llm' | 'local_evidence_synthesis' | 'local_evidence_synthesis_fallback' | 'no_evidence';
+  model_name?: string | null;
+  has_evidence: boolean;
+  disclaimer: string;
+  fallback_reason?: string | null;
+  citations: CitationSource[];
+}
+
+export interface InventoryItem {
+  name: string;
+  path: string;
+  size_bytes: number;
+  category: string;
+  verified: boolean;
+  description: string;
+}
+
+export interface InventoryResponse {
+  indexed_passages: number;
+  total_experiments: number;
+  technical_report: string;
+  doi: string;
+  psi_repository_url: string;
+  files: InventoryItem[];
+}
+
+// -----------------------------------------------------------------------------
+// Phase 7: Evidence-to-Insight Engine Types
+// -----------------------------------------------------------------------------
+export interface ExperimentMatchCriteria {
+  query?: string | null;
+  material_category?: string | null;
+  flow_configuration?: string | null;
+  min_initial_o2?: number | null;
+  max_initial_o2?: number | null;
+  min_air_velocity?: number | null;
+  max_air_velocity?: number | null;
+  flame_behavior?: string | null;
+  limit?: number;
+}
+
+export interface MatchedExperimentItem {
+  test_id: string;
+  fuel_material: string;
+  material_category: string;
+  flow_configuration: string;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  final_co_ppm?: number | null;
+  delta_o2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  flame_behavior: string;
+  observations?: string | null;
+  total_match_score: number;
+  is_exact_match: boolean;
+  match_reasons: string[];
+  missing_fields: string[];
+  source_reference: string;
+  report_page_hint?: string | null;
+}
+
+export interface ExperimentMatchResponse {
+  total_found: number;
+  returned_count: number;
+  query_echo?: string | null;
+  scoring_criteria_explanation: string;
+  disclaimer: string;
+  results: MatchedExperimentItem[];
+}
+
+export interface ComparedExperimentData {
+  test_id: string;
+  fuel_material: string;
+  material_category: string;
+  flow_configuration: string;
+  flow_restrictor?: string | null;
+  air_velocity_cms?: string | null;
+  air_velocity_numeric?: number | null;
+  calibrated_initial_o2_pct?: number | null;
+  calibrated_final_o2_pct?: number | null;
+  initial_co2_pct?: number | null;
+  final_co2_pct?: number | null;
+  delta_co2_pct?: number | null;
+  initial_co_ppm?: number | null;
+  final_co_ppm?: number | null;
+  delta_co_ppm?: number | null;
+  delta_o2_pct?: number | null;
+  flame_behavior: string;
+  observations?: string | null;
+}
+
+export interface ComparisonWarning {
+  category: string;
+  severity: 'High' | 'Moderate' | 'Informational';
+  message: string;
+}
+
+export interface EvidenceToInsightSection {
+  observed_evidence: string[];
+  calculated_results: string[];
+  scientific_interpretation: string[];
+  limitations_and_uncertainties: string[];
+}
+
+export interface ExperimentComparisonResponse {
+  test_ids: string[];
+  experiments: ComparedExperimentData[];
+  incompatibility_warnings: ComparisonWarning[];
+  evidence_to_insight: EvidenceToInsightSection;
+  citations: CitationSource[];
+  synthesis_mode: string;
+  disclaimer: string;
+}
+
+// -----------------------------------------------------------------------------
+// NASA FLEX Planned Science Protocol Types (PSI-69)
+// -----------------------------------------------------------------------------
+export interface FlexConditionRecord {
+  test_no: number;
+  investigation: string;
+  fuel: string;
+  diluent: string;
+  suppressant: string;
+  fiber_support: string;
+  flow_velocity_cms: number;
+  initial_droplet_diameters_mm: string;
+  pressure_atm: number;
+  oxygen_mole_fraction: number;
+  suppressant_mole_fraction: number;
+  nitrogen_mole_fraction: number;
+  source_document: string;
+  source_section: string;
+  source_page: number;
+  record_type: string;
+}
+
+export interface FlexConditionListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  conditions: FlexConditionRecord[];
+}
+
+export interface FlexSummaryResponse {
+  total_planned_conditions: number;
+  unique_fuels: string[];
+  unique_suppressants: string[];
+  unique_pressures: number[];
+  min_pressure_atm: number;
+  max_pressure_atm: number;
+  min_oxygen_fraction: number;
+  max_oxygen_fraction: number;
+  fiber_supports: Record<string, number>;
+  flow_velocities: Record<string, number>;
+  fuel_counts: Record<string, number>;
+  suppressant_counts: Record<string, number>;
+  pressure_counts: Record<string, number>;
+  source_document: string;
+  source_section: string;
+  source_pages: string;
+  disclaimer: string;
+  nitrogen_derived_note: string;
+}
+
+export interface FlexAnalyticsResponse {
+  pressure_distribution: { pressure: number; count: number }[];
+  suppressant_distribution: { suppressant: string; count: number }[];
+  oxygen_distribution: { oxygen_fraction: number; count: number }[];
+  fuel_breakdown: { fuel: string; count: number }[];
+  matrix_scatter_points: {
+    test_no: number;
+    pressure_atm: number;
+    oxygen_mole_fraction: number;
+    suppressant_mole_fraction: number;
+    nitrogen_mole_fraction: number;
+    suppressant: string;
+    fuel: string;
+    fiber_support: string;
+    flow_velocity_cms: number;
+    source_page: number;
+  }[];
+}
+
+// -----------------------------------------------------------------------------
+// NASA PSI-69 FLEX Flight Experimental Results Types
+// -----------------------------------------------------------------------------
+export interface FlexResultRecord {
+  flex_test_num: number;
+  flex_identifier: string;
+  test_date: string;
+  test_gmt?: string | null;
+  fuel: string;
+  ambient_pressure_mmhg: number;
+  ambient_pressure_atm: number;
+  initial_o2_mole_fraction: number;
+  initial_n2_mole_fraction: number;
+  initial_co2_mole_fraction: number;
+  initial_he_mole_fraction: number;
+  droplet_initial_diameter_mm?: number | null;
+  visible_flame_extinction_diameter_mm?: number | null;
+  burning_rate_mm2_s?: number | null;
+  burn_time_s?: number | null;
+  burn_time_raw?: string | null;
+  test_end_outcome: string;
+  investigation: string;
+  source_file: string;
+  record_type: string;
+  has_pressure_warning: boolean;
+  pressure_warning_detail?: string | null;
+}
+
+export interface FlexResultListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  records: FlexResultRecord[];
+}
+
+export interface FlexResultSummaryResponse {
+  total_flight_records: number;
+  fuel_counts: Record<string, number>;
+  outcome_counts: Record<string, number>;
+  min_pressure_mmhg: number;
+  max_pressure_mmhg: number;
+  min_burning_rate_mm2_s?: number | null;
+  max_burning_rate_mm2_s?: number | null;
+  mean_burning_rate_mm2_s?: number | null;
+  min_burn_time_s?: number | null;
+  max_burn_time_s?: number | null;
+  min_droplet_diameter_mm?: number | null;
+  max_droplet_diameter_mm?: number | null;
+  missing_field_counts: Record<string, number>;
+  test_114_anomaly: {
+    flex_test_num: number;
+    flex_identifier: string;
+    ambient_pressure_mmhg: number;
+    fuel: string;
+    test_date: string;
+    warning: string;
+    surrounding_nominal_pressure_mmhg: string;
+  };
+  unresolved_counts_notice: {
+    local_csv_records: number;
+    nasa_psi_web_catalog_entries: number;
+    nasa_technical_report_tests: number;
+    status: string;
+    explanation: string;
+  };
+  source_file: string;
+  disclaimer: string;
+}
+
+export interface FlexResultAnalyticsResponse {
+  outcome_distribution: { outcome: string; count: number }[];
+  fuel_breakdown: { fuel: string; count: number }[];
+  outcome_by_fuel: {
+    fuel: string;
+    Extinction: number;
+    Disruption: number;
+    Completion: number;
+    total: number;
+  }[];
+  pressure_vs_burning_rate: {
+    valid_points: {
+      flex_test_num: number;
+      flex_identifier: string;
+      fuel: string;
+      ambient_pressure_mmhg: number;
+      ambient_pressure_atm: number;
+      burning_rate_mm2_s: number;
+      droplet_initial_diameter_mm?: number | null;
+      burn_time_s?: number | null;
+      outcome: string;
+    }[];
+    excluded_points: {
+      flex_test_num: number;
+      flex_identifier: string;
+      fuel: string;
+      ambient_pressure_mmhg: number;
+      ambient_pressure_atm: number;
+      burning_rate_mm2_s?: number | null;
+      outcome: string;
+      reason: string;
+    }[];
+    total_valid: number;
+    total_excluded: number;
+    excluded_due_to_zero_pressure: number;
+    excluded_due_to_missing_burning_rate: number;
+    regression?: {
+      slope: number;
+      intercept: number;
+      r_squared: number;
+      pearson_r: number;
+      sample_size: number;
+      equation: string;
+      note: string;
+    } | null;
+  };
+  diameter_vs_burn_time: {
+    flex_test_num: number;
+    flex_identifier: string;
+    fuel: string;
+    initial_diameter_mm: number;
+    burn_time_s: number;
+    outcome: string;
+  }[];
+  burning_rate_distribution: { bin: string; count: number }[];
+}
+

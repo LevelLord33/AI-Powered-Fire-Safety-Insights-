@@ -1,0 +1,251 @@
+/**
+ * API client layer communicating with the FastAPI backend.
+ * Uses Vite proxy (/api -> http://127.0.0.1:8000/api) with resilient error handling,
+ * request timeouts, and strict schema validation.
+ */
+
+import {
+  HealthData,
+  DatasetSummary,
+  ExperimentListResponse,
+  ExperimentRecord,
+  ExtinctionBoundaryResponse,
+  GasCorrelationsResponse,
+  AssistantResponse,
+  InventoryResponse,
+  ExperimentMatchCriteria,
+  ExperimentMatchResponse,
+  ExperimentComparisonResponse,
+  FlexConditionListResponse,
+  FlexSummaryResponse,
+  FlexAnalyticsResponse,
+  FlexResultRecord,
+  FlexResultListResponse,
+  FlexResultSummaryResponse,
+  FlexResultAnalyticsResponse,
+} from '../types';
+
+const API_BASE = ((import.meta as any).env?.VITE_API_BASE_URL as string) || '/api';
+const DEFAULT_TIMEOUT_MS = 30000; // 30s timeout for RAG queries
+
+export class ApiError extends Error {
+  status: number;
+  detail?: string;
+  constructor(message: string, status: number, detail?: string) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+    this.name = 'ApiError';
+  }
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+  const url = `${API_BASE}${endpoint}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorMsg = `Server responded with HTTP ${response.status}`;
+      let detail: string | undefined;
+
+      try {
+        const errorData = await response.json();
+        if (errorData.detail) {
+          detail = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+          if (detail) {
+            errorMsg = detail;
+          }
+        }
+      } catch {
+        // Fallback to text status if not JSON
+      }
+
+      throw new ApiError(errorMsg, response.status, detail);
+    }
+
+    return await response.json();
+  } catch (err: unknown) {
+    clearTimeout(timeoutId);
+
+    if (err instanceof ApiError) {
+      throw err;
+    }
+
+    if ((err as Error)?.name === 'AbortError') {
+      throw new ApiError(
+        `Request to ${endpoint} timed out after ${timeoutMs / 1000} seconds. The backend may be performing intensive reasoning or is busy.`,
+        408
+      );
+    }
+
+    // Network failure / server offline
+    throw new ApiError(
+      'Unable to connect to the NASA analytics backend. Please verify the FastAPI service is running at http://127.0.0.1:8000.',
+      0
+    );
+  }
+}
+
+export const api = {
+  /** Fetch system health, platform telemetry, and active AI model */
+  getHealth: () => request<HealthData>('/health'),
+
+  /** Fetch global dataset summary, oxygen limits, and filter lists */
+  getSummary: () => request<DatasetSummary>('/experiments/summary'),
+
+  /** Query filterable, paginated experiment records */
+  getExperiments: (params: {
+    search?: string;
+    material?: string;
+    pi?: string;
+    flow_config?: string;
+    min_o2?: number;
+    max_o2?: number;
+    page?: number;
+    limit?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.append('search', params.search);
+    if (params.material) query.append('material', params.material);
+    if (params.pi) query.append('pi', params.pi);
+    if (params.flow_config) query.append('flow_config', params.flow_config);
+    if (params.min_o2 !== undefined) query.append('min_o2', params.min_o2.toString());
+    if (params.max_o2 !== undefined) query.append('max_o2', params.max_o2.toString());
+    if (params.page !== undefined) query.append('page', params.page.toString());
+    if (params.limit !== undefined) query.append('limit', params.limit.toString());
+
+    const qs = query.toString();
+    return request<ExperimentListResponse>(`/experiments${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Lookup detailed telemetry for a single test run */
+  getExperimentById: (testId: string) =>
+    request<ExperimentRecord>(`/experiments/${encodeURIComponent(testId.trim())}`),
+
+  /** Fetch oxygen vs airflow flame survival points */
+  getExtinctionBoundary: () =>
+    request<ExtinctionBoundaryResponse>('/analytics/extinction-boundary'),
+
+  /** Fetch stoichiometry and CO generation correlation matrix */
+  getGasCorrelations: () =>
+    request<GasCorrelationsResponse>('/analytics/gas-correlations'),
+
+  /** Submit scientific query to Multi-Dataset NASA AI Assistant */
+  queryAssistant: (question: string, dataset: string = 'all') =>
+    request<AssistantResponse>(
+      '/assistant/query',
+      {
+        method: 'POST',
+        body: JSON.stringify({ question, dataset }),
+      },
+      45000 // Allow up to 45s for model generation
+    ),
+
+  /** Fetch file manifest and document provenance statistics */
+  getInventory: () => request<InventoryResponse>('/inventory'),
+
+  /** Phase 7: Match experiments with transparent scientific criteria */
+  matchExperiments: (criteria: ExperimentMatchCriteria) =>
+    request<ExperimentMatchResponse>('/insights/match', {
+      method: 'POST',
+      body: JSON.stringify(criteria),
+    }),
+
+  /** Phase 7 & 12: Side-by-side scientific comparison and 4-tier Evidence-to-Insight */
+  compareExperiments: (testIds: string[], includeSynthesis: boolean = true, investigation: string = 'bass_ii') =>
+    request<ExperimentComparisonResponse>('/insights/compare', {
+      method: 'POST',
+      body: JSON.stringify({ test_ids: testIds, include_synthesis: includeSynthesis, investigation }),
+    }),
+
+  /** Phase 9: Fetch FLEX planned science protocol matrix summary */
+  getFlexSummary: () => request<FlexSummaryResponse>('/flex/summary'),
+
+  /** Phase 9: Search and filter FLEX planned test conditions */
+  getFlexConditions: (params: {
+    page?: number;
+    limit?: number;
+    fuel?: string;
+    suppressant?: string;
+    min_pressure?: number;
+    max_pressure?: number;
+    min_o2?: number;
+    max_o2?: number;
+    fiber_support?: string;
+    search?: string;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.page) query.append('page', params.page.toString());
+    if (params.limit) query.append('limit', params.limit.toString());
+    if (params.fuel) query.append('fuel', params.fuel);
+    if (params.suppressant) query.append('suppressant', params.suppressant);
+    if (params.min_pressure !== undefined) query.append('min_pressure', params.min_pressure.toString());
+    if (params.max_pressure !== undefined) query.append('max_pressure', params.max_pressure.toString());
+    if (params.min_o2 !== undefined) query.append('min_o2', params.min_o2.toString());
+    if (params.max_o2 !== undefined) query.append('max_o2', params.max_o2.toString());
+    if (params.fiber_support) query.append('fiber_support', params.fiber_support);
+    if (params.search) query.append('search', params.search);
+
+    const qs = query.toString();
+    return request<FlexConditionListResponse>(`/flex/conditions${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Phase 9: Fetch FLEX protocol distributions and matrix scatter points */
+  getFlexAnalytics: () => request<FlexAnalyticsResponse>('/flex/analytics'),
+
+  /** Phase 11: Fetch NASA PSI-69 FLEX flight experimental results summary */
+  getFlexResultsSummary: () => request<FlexResultSummaryResponse>('/flex-results/summary'),
+
+  /** Phase 11: Search and filter NASA PSI-69 FLEX flight experimental records */
+  getFlexResultsRecords: (params: {
+    page?: number;
+    limit?: number;
+    fuel?: string;
+    outcome?: string;
+    min_pressure_mmhg?: number;
+    max_pressure_mmhg?: number;
+    min_o2?: number;
+    max_o2?: number;
+    min_burning_rate?: number;
+    max_burning_rate?: number;
+    search?: string;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.page) query.append('page', params.page.toString());
+    if (params.limit) query.append('limit', params.limit.toString());
+    if (params.fuel) query.append('fuel', params.fuel);
+    if (params.outcome) query.append('outcome', params.outcome);
+    if (params.min_pressure_mmhg !== undefined) query.append('min_pressure_mmhg', params.min_pressure_mmhg.toString());
+    if (params.max_pressure_mmhg !== undefined) query.append('max_pressure_mmhg', params.max_pressure_mmhg.toString());
+    if (params.min_o2 !== undefined) query.append('min_o2', params.min_o2.toString());
+    if (params.max_o2 !== undefined) query.append('max_o2', params.max_o2.toString());
+    if (params.min_burning_rate !== undefined) query.append('min_burning_rate', params.min_burning_rate.toString());
+    if (params.max_burning_rate !== undefined) query.append('max_burning_rate', params.max_burning_rate.toString());
+    if (params.search) query.append('search', params.search);
+
+    const qs = query.toString();
+    return request<FlexResultListResponse>(`/flex-results/records${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Phase 11: Fetch single flight test detail by test index */
+  getSingleFlexResult: (testNum: number) => request<FlexResultRecord>(`/flex-results/records/${testNum}`),
+
+  /** Phase 11: Fetch FLEX flight results analytics and regression */
+  getFlexResultsAnalytics: () => request<FlexResultAnalyticsResponse>('/flex-results/analytics'),
+};

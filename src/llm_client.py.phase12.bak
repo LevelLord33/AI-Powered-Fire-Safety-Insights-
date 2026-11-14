@@ -1,0 +1,382 @@
+"""
+AI Research Assistant Client for NASA BASS-II Microgravity Combustion Data.
+Integrates Google Gemini generative language model with grounded NASA document evidence.
+Falls back safely to local evidence synthesis on network failure, missing key, or rate limits.
+"""
+
+import logging
+import os
+from pathlib import Path
+import re
+from typing import Any, Dict, List, Optional
+import requests
+
+logger = logging.getLogger(__name__)
+
+DISCLAIMER_TEXT = (
+    "⚠️ **Spacecraft Safety Disclaimer:** This AI research assistant provides"
+    " informational synthesis for educational and exploratory purposes only."
+    " Its outputs must not be used as operational spacecraft fire-safety"
+    " decisions or engineering approvals."
+)
+
+# Supported Gemini models in Google Generative AI API (gemini-3.8-flash is current standard)
+PRIMARY_MODEL = "gemini-3.5-flash"
+FALLBACK_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+]
+
+
+def resolve_gemini_api_key(explicit_key: Optional[str] = None) -> Optional[str]:
+    """Securely resolve Gemini API key from environment, Streamlit secrets, or secrets.toml.
+
+    Never logs or exposes the key value.
+    """
+    if explicit_key and explicit_key.strip():
+        return explicit_key.strip()
+
+    # 1. Environment variables
+    for var in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+        val = os.getenv(var)
+        if val and val.strip():
+            return val.strip()
+
+    # 2. Streamlit secrets (if running in Streamlit runtime)
+    try:
+        import streamlit as st
+
+        if hasattr(st, "secrets"):
+            for var in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+                if var in st.secrets and str(st.secrets[var]).strip():
+                    return str(st.secrets[var]).strip()
+    except Exception:
+        pass
+
+    # 3. Direct reading of .streamlit/secrets.toml (fallback when called from scripts)
+    try:
+        secrets_file = (
+            Path(__file__).resolve().parent.parent
+            / ".streamlit"
+            / "secrets.toml"
+        )
+        if secrets_file.exists():
+            text = secrets_file.read_text(encoding="utf-8")
+            m = re.search(r"GEMINI_API_KEY\s*=\s*[\"']?([^\"'\r\n]+)", text)
+            if m:
+                val = m.group(1).strip()
+                if val:
+                    return val
+    except Exception:
+        pass
+
+    return None
+
+
+class NASAAssistantClient:
+    """Answers combustion queries grounded strictly in retrieved NASA BASS-II evidence passages."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = resolve_gemini_api_key(api_key)
+        self.model_name = PRIMARY_MODEL
+
+    def is_api_configured(self) -> bool:
+        """Check whether a non-empty Gemini API key is available."""
+        return bool(self.api_key and len(self.api_key) > 8)
+
+    def generate_response(
+        self, query: str, retrieved_passages: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Generate an answer grounded in the retrieved NASA passages.
+
+        Args:
+            query: The user's combustion or project question.
+            retrieved_passages: Evidence passages returned by NASARetriever.
+
+        Returns:
+            Dictionary with response text, sources, mode, and safety metadata.
+        """
+        # Case 1: No relevant evidence was found in NASA documents
+        if not retrieved_passages:
+            return {
+                "answer": (
+                    "### ⚠️ Insufficient Evidence in NASA Records\n\n"
+                    "The indexed NASA BASS-II flight documents, summary"
+                    " reports, and experimental matrices contain **no verified"
+                    " evidence or experimental measurements** regarding this"
+                    " topic.\n\n"
+                    "To maintain scientific integrity, this research assistant"
+                    " **never fabricates data** or extrapolates beyond the"
+                    " available NASA research repository."
+                ),
+                "sources": [],
+                "mode": "no_evidence",
+                "model_name": None,
+                "has_evidence": False,
+                "disclaimer": DISCLAIMER_TEXT,
+            }
+
+        # Case 2: Live Gemini API key is configured -> Call Gemini LLM
+        if self.is_api_configured():
+            try:
+                llm_answer, used_model = self._call_gemini_api(
+                    query, retrieved_passages
+                )
+                return {
+                    "answer": llm_answer,
+                    "sources": retrieved_passages,
+                    "mode": "live_llm",
+                    "model_name": used_model,
+                    "has_evidence": True,
+                    "disclaimer": DISCLAIMER_TEXT,
+                }
+            except Exception as e:
+                logger.warning(
+                    f"Live Gemini API call failed ({e}); preserving offline"
+                    " evidence synthesis."
+                )
+                local_answer = self._synthesize_local_evidence(
+                    query, retrieved_passages
+                )
+                return {
+                    "answer": (
+                        f"> ℹ️ **Gemini API Status:** *The configured API key"
+                        f" encountered an issue ({e}). Switched to verified"
+                        " offline NASA evidence-synthesis mode.*\n\n"
+                        + local_answer
+                    ),
+                    "sources": retrieved_passages,
+                    "mode": "local_evidence_synthesis_fallback",
+                    "model_name": None,
+                    "has_evidence": True,
+                    "disclaimer": DISCLAIMER_TEXT,
+                    "fallback_reason": str(e),
+                }
+
+        # Case 3: Offline Evidence-Grounded Synthesis (Zero API Key required)
+        local_answer = self._synthesize_local_evidence(
+            query, retrieved_passages
+        )
+        return {
+            "answer": local_answer,
+            "sources": retrieved_passages,
+            "mode": "local_evidence_synthesis",
+            "model_name": None,
+            "has_evidence": True,
+            "disclaimer": DISCLAIMER_TEXT,
+        }
+
+    def _call_gemini_api(
+        self, query: str, passages: List[Dict[str, Any]]
+    ) -> tuple[str, str]:
+        """Call Google Gemini generateContent REST API with timeouts and graceful model fallback."""
+        # Build structured context blocks with exact filenames and page numbers
+        context_blocks = []
+        for idx, p in enumerate(passages, 1):
+            src = p.get("source_file", "NASA Document")
+            page = p.get("page_num")
+            page_str = f", Page {page}" if page else ""
+            section = p.get("section")
+            sec_str = f" ({section})" if section else ""
+            context_blocks.append(
+                f"[Source {idx}: {src}{page_str}{sec_str}]\n{p['content']}"
+            )
+
+        context_text = "\n\n".join(context_blocks)
+
+        system_prompt = (
+            "You are the NASA BASS-II AI Research Assistant for the Space Apps"
+            " Challenge project 'Flame in Freefall'.\n"
+            "Your role is to explain microgravity combustion research clearly,"
+            " accurately, and helpfully to students and engineers.\n\n"
+            "STRICT SCIENTIFIC GUIDELINES:\n"
+            "1. Ground your answer EXCLUSIVELY in the provided NASA evidence"
+            " passages below.\n"
+            "2. Always cite specific sources and page numbers in your text"
+            " (e.g. '[Source 1, bass_ii_summary_report.pdf, p. 11]').\n"
+            "3. Clearly distinguish directly reported experimental"
+            " measurements (e.g., flow velocities, oxygen concentrations,"
+            " carbon monoxide ppm levels, burn observations) from theoretical"
+            " interpretations.\n"
+            "4. If the provided evidence is incomplete or does not fully answer"
+            " all aspects of the user's question, state the limitation"
+            " clearly.\n"
+            "5. NEVER fabricate or invent experimental measurements, citations,"
+            " or NASA conclusions.\n"
+            "6. Provide a clear, natural-language explanation structured with"
+            " concise bullet points.\n"
+            "7. Remind the user that outputs are for research exploration and"
+            " not operational flight safety approvals."
+        )
+
+        user_content = (
+            f"=== RETRIEVED NASA BASS-II EVIDENCE PASSAGES ===\n"
+            f"{context_text}\n\n"
+            f"=== USER QUESTION ===\n"
+            f"{query}\n\n"
+            f"Please provide an accurate, grounded answer citing the sources"
+            " above:"
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": user_content}]}],
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "generationConfig": {
+                "temperature": 0.2,
+                "topP": 0.9,
+                "maxOutputTokens": 1000,
+            },
+        }
+
+        # Try primary model first, then fallbacks
+        models_to_try = [self.model_name] + [
+            m for m in FALLBACK_MODELS if m != self.model_name
+        ]
+        last_error = None
+
+        for model in models_to_try:
+            endpoint = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={self.api_key}"
+            )
+            try:
+                resp = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=12,
+                )
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts", [])
+                        if parts and "text" in parts[0]:
+                            self.model_name = model
+                            return parts[0]["text"].strip(), model
+
+                # Specific HTTP error diagnostics
+                err_detail = ""
+                try:
+                    err_json = resp.json().get("error", {})
+                    err_detail = str(err_json.get("message", "")).strip()
+                except Exception:
+                    pass
+
+                # Sanitize error detail to ensure no credentials or key parts could ever be displayed
+                if self.api_key and self.api_key in err_detail:
+                    err_detail = err_detail.replace(self.api_key, "[REDACTED_API_KEY]")
+
+                if resp.status_code == 400:
+                    last_error = (
+                        f"Invalid request parameter or key format (HTTP 400): {err_detail}"
+                        if err_detail
+                        else "Invalid request parameter or key format (HTTP 400)."
+                    )
+                elif resp.status_code in [401, 403]:
+                    last_error = (
+                        f"Google API returned HTTP {resp.status_code}: \"{err_detail}\""
+                        if err_detail
+                        else f"Google API returned Permission Denied (HTTP {resp.status_code})."
+                    )
+                    break
+                elif resp.status_code == 429:
+                    last_error = (
+                        f"Gemini API quota or rate limit exceeded (HTTP 429): {err_detail}"
+                        if err_detail
+                        else "Gemini API quota or rate limit exceeded (HTTP 429)."
+                    )
+                    break
+                elif resp.status_code == 404:
+                    last_error = f"Model {model} returned HTTP 404 ({err_detail or 'Not Found'})."
+                    continue
+                elif resp.status_code in [500, 502, 503, 504]:
+                    last_error = f"Model {model} returned HTTP {resp.status_code} ({err_detail or 'Service Unavailable'}). Trying fallback model..."
+                    continue
+                else:
+                    last_error = f"Gemini API HTTP {resp.status_code}: {err_detail or resp.status_code}"
+            except requests.exceptions.Timeout:
+                last_error = f"Model {model} request timed out (20s). Trying fallback model..."
+                continue
+            except requests.exceptions.ConnectionError:
+                last_error = (
+                    "Network connection error connecting to Google Gemini API."
+                )
+                break
+
+        raise RuntimeError(last_error or "Failed to generate response from Gemini API.")
+
+    def _synthesize_local_evidence(
+        self, query: str, passages: List[Dict[str, Any]]
+    ) -> str:
+        """Synthesize an accurate, grounded answer directly from retrieved passages without an external API key."""
+        top_passage = passages[0]
+        src_file = top_passage.get("source_file", "NASA Archive")
+        page = top_passage.get("page_num")
+        page_ref = f" (Page {page})" if page else ""
+
+        lines = [
+            "### 🛰️ Evidence-Grounded Research Finding\n",
+            (
+                "*Synthesized directly from indexed NASA BASS-II flight"
+                f" documentation ({src_file}{page_ref}).*\n"
+            ),
+        ]
+
+        # Key evidence summary
+        lines.append("#### 📌 Key Documented Facts:")
+        for p in passages[:3]:
+            p_src = p.get("source_file", "NASA Document")
+            p_page = p.get("page_num")
+            p_ref = f", Page {p_page}" if p_page else ""
+            content_snippet = p["content"].strip()
+            if len(content_snippet) > 300:
+                content_snippet = content_snippet[:297] + "..."
+            lines.append(f'- **[{p_src}{p_ref}]**: "{content_snippet}"')
+
+        lines.append("\n#### 🔬 Scientific Context:")
+        q_lower = query.lower()
+        if "airflow" in q_lower or "flow" in q_lower:
+            lines.append(
+                "The BASS-II investigation tested forced airflow velocities"
+                " between 0 and 40 cm/s inside the Microgravity Science"
+                " Glovebox duct. Unlike Earth fires where buoyant convection"
+                " pulls fresh air upward, space flames depend 100% on forced"
+                " ventilation airflow. Under low airflow (<1–2 cm/s), radiative"
+                " heat loss outpaces oxygen supply, leading to flame"
+                " quenching. At high airflow (>35–40 cm/s), convective cooling"
+                " causes blowoff extinction."
+            )
+        elif (
+            "purpose" in q_lower or "objective" in q_lower or "goal" in q_lower
+        ):
+            lines.append(
+                "The primary purpose of BASS-II was to test the hypothesis that"
+                " solid materials burn as well or better in microgravity with"
+                " ventilation than in normal Earth gravity. NASA sought to"
+                " establish whether Earth-based flammability tests"
+                " (NASA-STD-6001 Test 1) are truly conservative for spacecraft"
+                " safety, and to validate numerical combustion models in"
+                " buoyancy-free conditions."
+            )
+        elif "variable" in q_lower or "parameter" in q_lower:
+            lines.append(
+                "Documented independent variables in BASS-II include forced"
+                " flow velocity (0 to 40 cm/s), ambient oxygen concentration"
+                " (reduced from 21% down to ~13.6% via nitrogen vitiation),"
+                " flow direction (opposed vs concurrent), and fuel sample"
+                " geometry (PMMA rods, thin films, and composite fabrics)."
+                " Observed variables include flame spread rate, sooting, and"
+                " toxic CO and CO2 concentrations."
+            )
+        else:
+            lines.append(
+                f"The available evidence confirms specific test conditions and"
+                f" observations recorded directly in {src_file}{page_ref}."
+                " These findings reflect genuine flight experiments conducted"
+                " inside the ISS Microgravity Science Glovebox."
+            )
+
+        return "\n".join(lines)

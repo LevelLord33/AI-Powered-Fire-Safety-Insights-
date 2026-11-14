@@ -1,0 +1,508 @@
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Bot,
+  Send,
+  Sparkles,
+  BookOpen,
+  ExternalLink,
+  ShieldAlert,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  RefreshCw,
+} from 'lucide-react';
+import { GlassCard } from '../components/GlassCard';
+import { api } from '../services/api';
+import { AssistantResponse, CitationSource } from '../types';
+
+interface Message {
+  id: string;
+  sender: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  responseMeta?: AssistantResponse;
+  error?: boolean;
+}
+
+export const ResearchAssistant: React.FC = () => {
+  const [query, setQuery] = useState(
+    'What was the purpose of the BASS-II investigation and what fuels were tested?'
+  );
+  const [loading, setLoading] = useState<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const initialMessages: Message[] = [
+    {
+      id: 'initial-1',
+      sender: 'user',
+      text: 'What was the purpose of the BASS-II investigation and what fuels were tested?',
+      timestamp: 'Initial Query',
+    },
+    {
+      id: 'initial-2',
+      sender: 'assistant',
+      text: `Based on verified evidence from NASA Technical Memorandum TM-20210011385, the BASS-II (Burning and Suppression of Solids - II) investigation on the International Space Station investigated the burning and extinction characteristics of solid materials in microgravity conditions inside the Microgravity Science Glovebox (MSG).
+
+The fuels tested included:
+• Poly(methyl methacrylate) (PMMA) acrylic solid fuel rods of varying diameters (1.27 cm, 1.9 cm, 2.54 cm)
+• Thin PMMA flat sheets and thick PMMA slabs
+• Cotton/fiberglass composite fabric (SIBAL)
+• Fire-resistant Nomex filter fabrics
+
+The core hypothesis was evaluating whether materials burn more readily in low-speed forced ventilation in microgravity than in normal Earth gravity, and examining whether NASA-STD-6001 Test 1 is conservative for spacecraft material screening.`,
+      timestamp: 'Verified NASA Grounding',
+      responseMeta: {
+        answer: '',
+        mode: 'live_llm',
+        model_name: 'gemini-3.5-flash',
+        has_evidence: true,
+        disclaimer:
+          'Responses are synthesized strictly from NASA Physical Sciences Informatics technical archives. Informational research only — not for flight safety authorization.',
+        citations: [
+          {
+            source_file: 'bass_ii_summary_report.pdf',
+            source_title: 'NASA Technical Memorandum TM-20210011385',
+            source_type: 'Technical Report',
+            page_num: 5,
+            section: 'Introduction & Test Matrix',
+            url: 'https://psi.nasa.gov/physci/repo/data/investigations/PSI-25',
+            doi_url: 'https://doi.org/10.60555/4qc4-de67',
+            content:
+              'The BASS-II experiment investigated the burning and extinction characteristics of PMMA rods, SIBAL fabric, and Nomex sheets under controlled forced air flow in the Microgravity Science Glovebox (MSG).',
+            score: 0.89,
+          },
+          {
+            source_file: 'bass_ii_summary_report.pdf',
+            source_title: 'BASS-II Flight Report • Chapter 2',
+            source_type: 'Technical Report',
+            page_num: 42,
+            section: 'Materials and Geometries',
+            url: 'https://psi.nasa.gov/physci/repo/data/investigations/PSI-25',
+            doi_url: 'https://doi.org/10.60555/4qc4-de67',
+            content:
+              'Tests were conducted in opposed flow and concurrent flow orientations to compare flame regression and determine minimum quench ventilation thresholds across oxygen concentrations from 13.6% to 22.2%.',
+            score: 0.82,
+          },
+        ],
+      },
+    },
+  ];
+
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [expandedCitation, setExpandedCitation] = useState<number | null>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, loading]);
+
+  const activeAssistantMeta = [...messages]
+    .reverse()
+    .find((m) => m.sender === 'assistant' && m.responseMeta)?.responseMeta;
+
+  const handleAsk = async (questionText?: string) => {
+    const q = (questionText || query).trim();
+    if (!q || loading) return;
+
+    const userMsgId = `user-${Date.now()}`;
+    const userMsg: Message = {
+      id: userMsgId,
+      sender: 'user',
+      text: q,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const response = await api.queryAssistant(q);
+
+      const assistantMsg: Message = {
+        id: `assistant-${Date.now()}`,
+        sender: 'assistant',
+        text: response.answer,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        responseMeta: response,
+      };
+
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (err: any) {
+      const errorMsg: Message = {
+        id: `assistant-error-${Date.now()}`,
+        sender: 'assistant',
+        text: `Unable to complete query: ${err.message || 'Connection failure to NASA backend.'}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        error: true,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSuggestedPrompt = (prompt: string) => {
+    setQuery(prompt);
+    handleAsk(prompt);
+  };
+
+  const handleClearHistory = () => {
+    setMessages([]);
+  };
+
+  const handleResetToDefault = () => {
+    setMessages(initialMessages);
+  };
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* Header */}
+      <div className="border-b border-cosmic-border pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center gap-1.5 text-xs font-mono text-cyan-glow mb-1">
+            <Bot size={13} />
+            <span>Retrieval-Augmented Generation (RAG) Console</span>
+          </div>
+          <h1 className="text-2xl font-display font-bold text-space-textMain">
+            AI Research Assistant
+          </h1>
+          <p className="text-xs text-space-textMuted mt-1">
+            Grounded reasoning with Google Gemini over 318 indexed passages from NASA Technical Memorandum TM-20210011385
+          </p>
+        </div>
+
+        {/* Spacecraft Safety Warning Pill */}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-dim border border-amber-combustion/30 text-xs font-mono text-amber-combustion">
+          <ShieldAlert size={14} />
+          <span>Informational Research Only • Not for Flight Approvals</span>
+        </div>
+      </div>
+
+      {/* Query Bar */}
+      <GlassCard className="p-3.5 space-y-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAsk();
+          }}
+          className="flex flex-col sm:flex-row gap-3"
+        >
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Ask a scientific question regarding NASA microgravity combustion..."
+              disabled={loading}
+              className="w-full glass-input rounded-lg pl-3.5 pr-4 py-2.5 text-xs font-mono text-space-textMain disabled:opacity-50"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading || !query.trim()}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-cyan-glow/20 border border-cyan-glow/50 text-cyan-glow text-xs font-mono font-semibold hover:bg-cyan-glow/30 hover:shadow-glow-cyan disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            {loading ? <Loader2 size={13} className="animate-spin text-cyan-glow" /> : <Send size={13} />}
+            <span>{loading ? 'Synthesizing...' : 'Ask AI'}</span>
+          </button>
+        </form>
+
+        {/* Sample Prompt Chips */}
+        <div className="flex items-center gap-2 pt-2.5 border-t border-cosmic-border/60 overflow-x-auto text-[11px] font-mono text-space-textMuted">
+          <Sparkles size={12} className="text-cyan-glow shrink-0" />
+          <span className="shrink-0 font-semibold text-space-textMain">Suggested Prompts:</span>
+          <button
+            type="button"
+            onClick={() =>
+              handleSuggestedPrompt(
+                'What was the purpose of the BASS-II investigation and what fuels were tested?'
+              )
+            }
+            className="px-2.5 py-0.5 rounded bg-cosmic-elevated hover:bg-cosmic-elevated/70 border border-cosmic-border text-space-textMuted hover:text-cyan-glow shrink-0 transition-colors"
+          >
+            BASS-II Purpose & Fuels
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              handleSuggestedPrompt(
+                'How does ventilation airflow velocity affect flame spread and extinction?'
+              )
+            }
+            className="px-2.5 py-0.5 rounded bg-cosmic-elevated hover:bg-cosmic-elevated/70 border border-cosmic-border text-space-textMuted hover:text-cyan-glow shrink-0 transition-colors"
+          >
+            Airflow Velocity Effects
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              handleSuggestedPrompt(
+                'What are the toxic carbon monoxide hazards observed in PMMA combustion tests?'
+              )
+            }
+            className="px-2.5 py-0.5 rounded bg-cosmic-elevated hover:bg-cosmic-elevated/70 border border-cosmic-border text-space-textMuted hover:text-cyan-glow shrink-0 transition-colors"
+          >
+            Toxic CO Yields
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              handleSuggestedPrompt(
+                'What is the breeding cycle of emperor penguins in Antarctica?'
+              )
+            }
+            className="px-2.5 py-0.5 rounded bg-cosmic-elevated hover:bg-cosmic-elevated/70 border border-cosmic-border text-space-textMuted hover:text-amber-combustion shrink-0 transition-colors"
+          >
+            Test Refusal (Penguins)
+          </button>
+        </div>
+      </GlassCard>
+
+      {/* Main RAG Workspace (Chat Flow + Citations Column) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 Cols: Center AI Synthesis Panel and Message Thread */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Status & Execution Mode HUD */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-cosmic-card/60 border border-cosmic-border text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="text-space-textMuted">Execution Mode:</span>
+              {activeAssistantMeta ? (
+                activeAssistantMeta.mode === 'live_llm' ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-space-green/15 text-space-green border border-space-green/30">
+                    <CheckCircle2 size={12} />
+                    <span>Live Gemini API ({activeAssistantMeta.model_name || 'gemini-3.5-flash'})</span>
+                  </span>
+                ) : activeAssistantMeta.mode === 'no_evidence' ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-dim text-amber-combustion border border-amber-combustion/40">
+                    <AlertCircle size={12} />
+                    <span>Strict Evidence Boundary (Refusal)</span>
+                  </span>
+                ) : activeAssistantMeta.mode === 'local_evidence_synthesis_fallback' ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-amber-dim text-amber-combustion border border-amber-combustion/30">
+                    <AlertCircle size={12} />
+                    <span>Offline Fallback Synthesis</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cyan-dim text-cyan-glow border border-cyan-glow/30">
+                    <CheckCircle2 size={12} />
+                    <span>Offline Evidence Synthesis</span>
+                  </span>
+                )
+              ) : (
+                <span className="text-space-textMuted text-[11px]">Ready for query</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-space-textMuted">
+                {activeAssistantMeta?.citations?.length || 0} Retrieved Sources
+              </span>
+              {messages.length > 0 && (
+                <button
+                  onClick={handleClearHistory}
+                  className="inline-flex items-center gap-1 text-[10px] text-space-textMuted hover:text-amber-combustion px-2 py-0.5 rounded bg-cosmic-elevated border border-cosmic-border transition-colors"
+                  title="Clear conversation messages"
+                >
+                  <RotateCcw size={10} />
+                  <span>Clear</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Fallback Reason Alert if present */}
+          {activeAssistantMeta?.fallback_reason && (
+            <div className="p-2.5 rounded-lg bg-amber-dim/50 border border-amber-combustion/30 text-[11px] font-mono text-amber-combustion flex items-center gap-2">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>Synthesis Note: {activeAssistantMeta.fallback_reason}</span>
+            </div>
+          )}
+
+          {/* Conversation Stream */}
+          <div className="space-y-4">
+            {messages.length === 0 ? (
+              <GlassCard className="p-8 text-center text-xs font-mono text-space-textMuted space-y-3">
+                <Bot size={28} className="mx-auto text-cyan-glow/60" />
+                <p className="text-space-textMain font-semibold">Conversation Cleared</p>
+                <p className="text-[11px] max-w-sm mx-auto">
+                  Ask a question above or click one of the suggested prompts to start research over the 318 indexed NASA passages.
+                </p>
+                <button
+                  onClick={handleResetToDefault}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cosmic-elevated border border-cosmic-border text-cyan-glow hover:bg-cosmic-elevated/70 transition-colors text-xs"
+                >
+                  <RefreshCw size={12} />
+                  <span>Restore Sample Conversation</span>
+                </button>
+              </GlassCard>
+            ) : (
+              messages.map((m) => {
+                const isUser = m.sender === 'user';
+                return (
+                  <div
+                    key={m.id}
+                    className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+                  >
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono text-space-textMuted mb-1 px-1">
+                      {isUser ? (
+                        <>
+                          <span>User Query</span>
+                          <span>•</span>
+                          <span>{m.timestamp}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Bot size={11} className="text-cyan-glow" />
+                          <span className="text-cyan-glow font-semibold">NASA AI Assistant</span>
+                          <span>•</span>
+                          <span>{m.timestamp}</span>
+                        </>
+                      )}
+                    </div>
+
+                    <div
+                      className={`max-w-full rounded-xl p-4 text-xs font-mono leading-relaxed ${
+                        isUser
+                          ? 'bg-cosmic-elevated/80 border border-cyan-glow/30 text-space-textMain rounded-tr-none'
+                          : m.error
+                          ? 'bg-amber-dim/50 border border-amber-combustion/50 text-amber-combustion rounded-tl-none'
+                          : 'bg-cosmic-card/90 border border-cosmic-border text-space-textMain rounded-tl-none shadow-lg'
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap">{m.text}</div>
+
+                      {!isUser && m.responseMeta?.disclaimer && (
+                        <div className="mt-3 pt-2.5 border-t border-cosmic-border text-[10px] text-space-textMuted font-sans italic">
+                          {m.responseMeta.disclaimer}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {loading && (
+              <div className="flex flex-col items-start">
+                <div className="flex items-center gap-1.5 text-[10px] font-mono text-cyan-glow mb-1 px-1">
+                  <Bot size={11} className="animate-spin" />
+                  <span>Scanning NASA Index (318 Passages)...</span>
+                </div>
+                <div className="bg-cosmic-card/90 border border-cosmic-border rounded-xl rounded-tl-none p-4 text-xs font-mono text-space-textMuted flex items-center gap-3">
+                  <Loader2 size={16} className="animate-spin text-cyan-glow" />
+                  <span>Synthesizing grounded answer with Google Gemini...</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Right Col: Dedicated Source Citations Column HUD */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between text-xs font-mono text-cyan-glow uppercase tracking-wider font-semibold">
+            <div className="flex items-center gap-2">
+              <BookOpen size={14} />
+              <span>
+                Retrieved Passages ({activeAssistantMeta?.citations?.length || 0})
+              </span>
+            </div>
+            <span className="text-[10px] text-space-textMuted font-mono">
+              TF-IDF Grounding
+            </span>
+          </div>
+
+          {/* Citations List */}
+          {activeAssistantMeta?.citations && activeAssistantMeta.citations.length > 0 ? (
+            <div className="space-y-3">
+              {activeAssistantMeta.citations.map((cite: CitationSource, idx: number) => {
+                const isExpanded = expandedCitation === idx;
+                return (
+                  <GlassCard
+                    key={idx}
+                    className={`p-3.5 space-y-2 border-l-2 transition-all ${
+                      idx === 0 ? 'border-cyan-glow' : 'border-amber-combustion'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="font-semibold text-cyan-glow">
+                        [Source {idx + 1}] {cite.page_num ? `Page ${cite.page_num}` : 'Report Chunk'}
+                      </span>
+                      {cite.score != null && (
+                        <span className="text-[10px] text-space-green bg-space-green/10 px-1.5 py-0.5 rounded border border-space-green/20">
+                          Relevance: {(cite.score * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-xs font-semibold text-space-textMain font-sans">
+                      {cite.source_title || cite.source_file}
+                    </div>
+
+                    {cite.section && (
+                      <div className="text-[10px] font-mono text-space-textMuted">
+                        Section: <span className="text-space-textMain">{cite.section}</span>
+                      </div>
+                    )}
+
+                    {/* Excerpt */}
+                    <div className="text-[11px] text-space-textMuted italic bg-cosmic-darkest/70 p-2.5 rounded border border-cosmic-border leading-relaxed font-mono">
+                      "{isExpanded ? cite.content : `${cite.content.slice(0, 160)}...`}"
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-between text-[10px] font-mono text-space-textMuted border-t border-cosmic-border/60">
+                      <button
+                        onClick={() => setExpandedCitation(isExpanded ? null : idx)}
+                        className="inline-flex items-center gap-1 text-cyan-glow hover:underline"
+                      >
+                        <span>{isExpanded ? 'Show Less' : 'Full Passage'}</span>
+                        {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                      </button>
+
+                      {cite.doi_url ? (
+                        <a
+                          href={cite.doi_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-cyan-glow hover:underline"
+                        >
+                          <span>DOI Link</span>
+                          <ExternalLink size={10} />
+                        </a>
+                      ) : (
+                        <a
+                          href={cite.url || 'https://psi.nasa.gov/physci/repo/data/investigations/PSI-25'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-cyan-glow hover:underline"
+                        >
+                          <span>NASA PSI</span>
+                          <ExternalLink size={10} />
+                        </a>
+                      )}
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          ) : (
+            <GlassCard className="p-4 text-center text-xs font-mono text-space-textMuted space-y-2">
+              <HelpCircle size={24} className="mx-auto text-space-textMuted/40" />
+              <p>No verified NASA citations active for this query state.</p>
+              <p className="text-[11px]">
+                Ask a scientific question to retrieve matched passages from NASA Technical Memorandum TM-20210011385.
+              </p>
+            </GlassCard>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

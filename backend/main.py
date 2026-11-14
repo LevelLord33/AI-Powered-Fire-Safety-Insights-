@@ -1,0 +1,1955 @@
+"""
+Flame in Freefall — FastAPI Backend Server
+Serves real NASA BASS-II (PSI-25) microgravity flight experiments, telemetry analytics,
+and grounded Gemini RAG question answering.
+"""
+
+from datetime import datetime, timezone
+import logging
+import math
+import re
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
+import pandas as pd
+
+from backend.config import (
+    CORS_ORIGINS,
+    EXPERIMENTS_CSV_PATH,
+    MISSION_METADATA,
+    SEARCH_INDEX_JSON_PATH,
+    SUMMARY_PDF_PATH,
+    FLEX_EXPERIMENTS_CSV_PATH,
+    FLEX_PDF_PATH,
+    FLEX_RESULTS_CSV_PATH,
+)
+from backend.schemas import (
+    AssistantQueryRequest,
+    AssistantQueryResponse,
+    CitationSource,
+    DatasetSummaryResponse,
+    ExperimentListResponse,
+    ExperimentRecord,
+    ExtinctionBoundaryPoint,
+    ExtinctionBoundaryResponse,
+    GasCorrelationRecord,
+    GasCorrelationsResponse,
+    HealthResponse,
+    InventoryItem,
+    InventoryResponse,
+    ExperimentMatchCriteria,
+    ExperimentMatchResponse,
+    MatchedExperimentItem,
+    ExperimentComparisonRequest,
+    ExperimentComparisonResponse,
+    ComparedExperimentData,
+    ComparisonWarning,
+    EvidenceToInsightSection,
+    FlexConditionRecord,
+    FlexConditionListResponse,
+    FlexSummaryResponse,
+    FlexAnalyticsResponse,
+    FlexResultRecord,
+    FlexResultListResponse,
+    FlexResultSummaryResponse,
+    FlexResultAnalyticsResponse,
+)
+from src.data_loader import filter_experiments, get_dataset_summary, load_experiments
+from src.llm_client import NASAAssistantClient
+from src.retriever import NASARetriever
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("flame_api")
+
+# Initialize FastAPI Application
+app = FastAPI(
+    title="Flame in Freefall — NASA Space Apps API",
+    description=(
+        "REST API exposing verified NASA BASS-II (PSI-25) microgravity combustion "
+        "flight experiments, sensor analytics, and Gemini AI research assistant."
+    ),
+    version="2.0.0",
+)
+
+# Configure Cross-Origin Resource Sharing (CORS) for React Vite
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -----------------------------------------------------------------------------
+# In-Memory Cache for Core Data & RAG Engine
+# -----------------------------------------------------------------------------
+_experiments_df: Optional[pd.DataFrame] = None
+_flex_df: Optional[pd.DataFrame] = None
+_flex_results_df: Optional[pd.DataFrame] = None
+_retriever: Optional[NASARetriever] = None
+_assistant_client: Optional[NASAAssistantClient] = None
+
+
+def get_df() -> pd.DataFrame:
+    """Lazy-load and return the verified NASA experimental dataset."""
+    global _experiments_df
+    if _experiments_df is None:
+        logger.info(f"Loading NASA experiments from {EXPERIMENTS_CSV_PATH}...")
+        _experiments_df = load_experiments(EXPERIMENTS_CSV_PATH)
+    return _experiments_df
+
+
+def get_flex_df() -> pd.DataFrame:
+    """Lazy-load and return the verified NASA FLEX planned science matrix."""
+    global _flex_df
+    if _flex_df is None:
+        if not FLEX_EXPERIMENTS_CSV_PATH.exists():
+            logger.error(f"FLEX dataset missing at {FLEX_EXPERIMENTS_CSV_PATH}")
+            raise HTTPException(status_code=404, detail="FLEX dataset not found.")
+        logger.info(f"Loading NASA FLEX protocol matrix from {FLEX_EXPERIMENTS_CSV_PATH}...")
+        _flex_df = pd.read_csv(FLEX_EXPERIMENTS_CSV_PATH, keep_default_na=False)
+    return _flex_df
+
+
+def get_flex_results_df() -> pd.DataFrame:
+    """Lazy-load and return the verified NASA PSI-69 FLEX as-run experimental flight results."""
+    global _flex_results_df
+    if _flex_results_df is None:
+        if not FLEX_RESULTS_CSV_PATH.exists():
+            logger.error(f"FLEX experimental results dataset missing at {FLEX_RESULTS_CSV_PATH}")
+            raise HTTPException(status_code=404, detail="FLEX experimental results dataset not found.")
+        logger.info(f"Loading NASA FLEX experimental results from {FLEX_RESULTS_CSV_PATH}...")
+        _flex_results_df = pd.read_csv(FLEX_RESULTS_CSV_PATH)
+    return _flex_results_df
+
+
+def get_retriever() -> NASARetriever:
+    """Lazy-load and return the TF-IDF NASA document retriever."""
+    global _retriever
+    if _retriever is None:
+        logger.info("Initializing NASARetriever...")
+        _retriever = NASARetriever()
+    return _retriever
+
+
+def get_assistant_client() -> NASAAssistantClient:
+    """Lazy-load and return the grounded NASA AI Assistant client."""
+    global _assistant_client
+    if _assistant_client is None:
+        logger.info("Initializing NASAAssistantClient...")
+        _assistant_client = NASAAssistantClient()
+    return _assistant_client
+
+
+def sanitize_dict_for_json(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace float NaN and infinite values with None for clean JSON serialization."""
+    sanitized = {}
+    for k, v in d.items():
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            sanitized[k] = None
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+# -----------------------------------------------------------------------------
+# 1. System Health & Mission Telemetry Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/health", response_model=HealthResponse, tags=["System"])
+def get_health() -> HealthResponse:
+    """Return system operational status, active AI model, and dataset counters."""
+    df = get_df()
+    client = get_assistant_client()
+    retriever = get_retriever()
+
+    api_configured = client.is_api_configured()
+    ai_mode = "live_llm" if api_configured else "offline_synthesis"
+
+    return HealthResponse(
+        status="ok",
+        service="Flame in Freefall API",
+        active_model=client.model_name if api_configured else None,
+        ai_mode=ai_mode,
+        total_experiments=len(df),
+        indexed_passages=len(retriever.chunks),
+        platform=MISSION_METADATA["platform"],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+# -----------------------------------------------------------------------------
+# 2. Experiment Summary & Filter Metadata Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/experiments/summary", response_model=DatasetSummaryResponse, tags=["Experiments"])
+def get_experiments_summary() -> DatasetSummaryResponse:
+    """Return summary statistics, oxygen ranges, and distinct filter values from genuine NASA records."""
+    df = get_df()
+    raw_summary = get_dataset_summary(df)
+
+    categories = sorted(df["material_category"].dropna().unique().tolist())
+    flow_configs = sorted(df["flow_configuration"].dropna().unique().tolist())
+    pis = sorted(df["principal_investigator"].dropna().unique().tolist())
+
+    return DatasetSummaryResponse(
+        total_records=raw_summary["total_records"],
+        total_columns=raw_summary["total_columns"],
+        unique_pis=raw_summary["unique_pis"],
+        unique_materials=raw_summary["unique_materials"],
+        min_o2=float(raw_summary["min_o2"]),
+        max_o2=float(raw_summary["max_o2"]),
+        avg_o2=round(float(raw_summary["avg_o2"]), 2),
+        max_co_ppm=float(raw_summary["max_co_ppm"]) if pd.notna(raw_summary.get("max_co_ppm")) else None,
+        hardware=MISSION_METADATA["facility"],
+        platform=MISSION_METADATA["platform"],
+        investigation=MISSION_METADATA["investigation"],
+        technical_report=MISSION_METADATA["technical_report"],
+        material_categories=categories,
+        flow_configurations=flow_configs,
+        pis_list=pis,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 3. Experiment Listing, Search, and Filtering Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/experiments", response_model=ExperimentListResponse, tags=["Experiments"])
+def list_experiments(
+    search: Optional[str] = Query(None, description="Search term matching test_id, material, or observations"),
+    material: Optional[str] = Query(None, description="Filter by material_category"),
+    pi: Optional[str] = Query(None, description="Filter by principal_investigator"),
+    flow_config: Optional[str] = Query(None, description="Filter by flow_configuration"),
+    min_o2: Optional[float] = Query(None, ge=10.0, le=30.0, description="Minimum initial oxygen %"),
+    max_o2: Optional[float] = Query(None, ge=10.0, le=30.0, description="Maximum initial oxygen %"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(20, ge=1, le=126, description="Items per page"),
+) -> ExperimentListResponse:
+    """Return a filterable, paginated list of NASA BASS-II flight experiment records."""
+    df = get_df()
+
+    materials_filter = [material] if material else None
+    pis_filter = [pi] if pi else None
+    flow_filter = [flow_config] if flow_config else None
+
+    filtered_df = filter_experiments(
+        df,
+        pis=pis_filter,
+        materials=materials_filter,
+        flow_configs=flow_filter,
+        min_o2=min_o2,
+        max_o2=max_o2,
+        search_query=search or "",
+    )
+
+    total_records = len(filtered_df)
+    total_pages = max(1, math.ceil(total_records / limit))
+
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_df = filtered_df.iloc[start_idx:end_idx]
+
+    # Convert to clean records with None instead of NaN
+    clean_records = [
+        sanitize_dict_for_json(record)
+        for record in page_df.to_dict(orient="records")
+    ]
+
+    return ExperimentListResponse(
+        total=total_records,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
+        experiments=clean_records,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 4. Single Experiment Telemetry Lookup Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/experiments/{test_id}", response_model=ExperimentRecord, tags=["Experiments"])
+def get_experiment_by_id(test_id: str) -> ExperimentRecord:
+    """Retrieve complete sensor readings and crew notes for a specific NASA flight test."""
+    df = get_df()
+    match = df[df["test_id"].astype(str).str.lower() == test_id.strip().lower()]
+
+    if match.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Experiment '{test_id}' was not found in verified NASA BASS-II records.",
+        )
+
+    record_dict = sanitize_dict_for_json(match.iloc[0].to_dict())
+    return ExperimentRecord(**record_dict)
+
+
+# -----------------------------------------------------------------------------
+# 5. Extinction Boundary Analytics Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/analytics/extinction-boundary", response_model=ExtinctionBoundaryResponse, tags=["Analytics"])
+def get_extinction_boundary_data() -> ExtinctionBoundaryResponse:
+    """Return initial oxygen vs airflow velocity coordinates with classified flame survival outcomes."""
+    df = get_df()
+
+    def classify_outcome(obs: Optional[str]) -> str:
+        if not obs or pd.isna(obs):
+            return "Observation Recorded"
+        obs_lower = str(obs).lower()
+        if any(w in obs_lower for w in ["extinguish", "quench", "went out", "died", "put out", "self-extinguished"]):
+            return "Extinguished / Quenched"
+        elif any(w in obs_lower for w in ["spread", "burn", "sustained", "steady", "grew", "propagated"]):
+            return "Sustained Flame"
+        return "Observation Recorded"
+
+    points: List[ExtinctionBoundaryPoint] = []
+    quenched_count = 0
+    sustained_count = 0
+    observed_count = 0
+
+    for _, row in df.iterrows():
+        behavior = classify_outcome(row.get("observations"))
+        if behavior == "Extinguished / Quenched":
+            quenched_count += 1
+        elif behavior == "Sustained Flame":
+            sustained_count += 1
+        else:
+            observed_count += 1
+
+        points.append(
+            ExtinctionBoundaryPoint(
+                test_id=str(row["test_id"]),
+                calibrated_initial_o2_pct=(
+                    float(row["calibrated_initial_o2_pct"])
+                    if pd.notna(row.get("calibrated_initial_o2_pct"))
+                    else None
+                ),
+                air_velocity_cms=str(row["air_velocity_cms"]) if pd.notna(row.get("air_velocity_cms")) else None,
+                air_velocity_numeric=(
+                    float(row["air_velocity_numeric"])
+                    if pd.notna(row.get("air_velocity_numeric"))
+                    else None
+                ),
+                fuel_material=str(row["fuel_material"]) if pd.notna(row.get("fuel_material")) else None,
+                material_category=str(row["material_category"]) if pd.notna(row.get("material_category")) else None,
+                flow_configuration=str(row["flow_configuration"]) if pd.notna(row.get("flow_configuration")) else None,
+                flame_behavior=behavior,
+                observations=str(row["observations"]) if pd.notna(row.get("observations")) else None,
+            )
+        )
+
+    summary = {
+        "total_analyzed_tests": len(points),
+        "quenched_count": quenched_count,
+        "sustained_count": sustained_count,
+        "other_observations_count": observed_count,
+        "critical_oxygen_limit_note": (
+            "Extinction occurs predominantly below 16.5% O2 in opposed flow, "
+            "while concurrent flow supports combustion at lower velocities."
+        ),
+    }
+
+    return ExtinctionBoundaryResponse(total_points=len(points), summary=summary, points=points)
+
+
+# -----------------------------------------------------------------------------
+# 6. Gas Stoichiometry & Correlation Analytics Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/analytics/gas-correlations", response_model=GasCorrelationsResponse, tags=["Analytics"])
+def get_gas_correlations_data() -> GasCorrelationsResponse:
+    """Return combustion gas consumption, toxic CO spikes, and mathematical Pearson correlations."""
+    df = get_df()
+
+    # Calculate Pearson correlations across valid pairs
+    r_o2_co2 = df["delta_o2_pct"].corr(df["delta_co2_pct"])
+    r_o2_co = df["calibrated_initial_o2_pct"].corr(df["final_co_ppm"])
+    r_vel_delta_o2 = df["air_velocity_numeric"].corr(df["delta_o2_pct"])
+
+    correlations_dict = {
+        "delta_o2_vs_delta_co2": round(float(r_o2_co2), 4) if pd.notna(r_o2_co2) else None,
+        "initial_o2_vs_final_co_ppm": round(float(r_o2_co), 4) if pd.notna(r_o2_co) else None,
+        "air_velocity_vs_delta_o2": round(float(r_vel_delta_o2), 4) if pd.notna(r_vel_delta_o2) else None,
+    }
+
+    records: List[GasCorrelationRecord] = []
+    for _, row in df.iterrows():
+        records.append(
+            GasCorrelationRecord(
+                test_id=str(row["test_id"]),
+                material_category=str(row.get("material_category", "Unknown")),
+                flow_configuration=str(row.get("flow_configuration", "Unknown")),
+                calibrated_initial_o2_pct=(
+                    float(row["calibrated_initial_o2_pct"])
+                    if pd.notna(row.get("calibrated_initial_o2_pct"))
+                    else None
+                ),
+                delta_o2_pct=float(row["delta_o2_pct"]) if pd.notna(row.get("delta_o2_pct")) else None,
+                final_co2_pct=float(row["final_co2_pct"]) if pd.notna(row.get("final_co2_pct")) else None,
+                delta_co2_pct=float(row["delta_co2_pct"]) if pd.notna(row.get("delta_co2_pct")) else None,
+                final_co_ppm=float(row["final_co_ppm"]) if pd.notna(row.get("final_co_ppm")) else None,
+                delta_co_ppm=float(row["delta_co_ppm"]) if pd.notna(row.get("delta_co_ppm")) else None,
+                air_velocity_numeric=(
+                    float(row["air_velocity_numeric"])
+                    if pd.notna(row.get("air_velocity_numeric"))
+                    else None
+                ),
+            )
+        )
+
+    return GasCorrelationsResponse(
+        total_records=len(records),
+        correlations=correlations_dict,
+        records=records,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 7. AI Research Assistant (RAG + Gemini / Offline Fallback) Endpoint
+# -----------------------------------------------------------------------------
+@app.post("/api/assistant/query", response_model=AssistantQueryResponse, tags=["AI Assistant"])
+def query_ai_assistant(payload: AssistantQueryRequest) -> AssistantQueryResponse:
+    """Submit a question to the grounded NASA Multi-Dataset AI Assistant.
+
+    Retrieves evidence passages via TF-IDF and computes deterministic calculations
+    across all three NASA datasets (BASS-II, FLEX planned, FLEX results), then synthesizes
+    an answer using Google Gemini (or offline synthesis fallback) with exact source citations.
+    """
+    retriever = get_retriever()
+    client = get_assistant_client()
+
+    query_str = payload.question.strip()
+    dataset_filter = (payload.dataset or "all").lower().strip()
+    if dataset_filter not in ["all", "bass_ii", "flex_planned", "flex_results"]:
+        dataset_filter = "all"
+    logger.info(f"Received AI query: '{query_str}' (Dataset Filter: '{dataset_filter}')")
+
+    # 1. Retrieve evidence: deterministic structured calculations + ranked document passages
+    evidence = retriever.retrieve_evidence(query_str, dataset_filter=dataset_filter, top_k=4)
+    passages = evidence.get("passages", [])
+    structured = evidence.get("structured_evidence")
+    logger.info(f"Retrieved {len(passages)} passages and structured topic '{structured.get('topic') if structured else None}' for query.")
+
+    # 2. Generate grounded answer
+    result = client.generate_response(query_str, passages, structured_evidence=structured, dataset_filter=dataset_filter)
+
+    # 3. Format citations for response contract
+    formatted_citations: List[CitationSource] = []
+    for p in result.get("sources", []):
+        ds = p.get("dataset", "bass_ii")
+        default_url = MISSION_METADATA["psi_repository_url"] if ds == "bass_ii" else "https://psi.nasa.gov/physci/repo/data/investigations/PSI-69"
+        default_doi = f"https://doi.org/{MISSION_METADATA['doi']}" if ds == "bass_ii" else "https://doi.org/10.60555/k695-k864"
+
+        formatted_citations.append(
+            CitationSource(
+                chunk_id=p.get("chunk_id"),
+                source_file=p.get("source_file", "NASA Document"),
+                source_title=p.get("source_title", "NASA Combustion Technical Document"),
+                source_type=p.get("source_type", "NASA Document"),
+                dataset=ds,
+                page_num=p.get("page_num"),
+                section=p.get("section"),
+                url=p.get("url", default_url),
+                doi_url=p.get("doi_url", default_doi),
+                content=p.get("content", ""),
+                score=round(float(p.get("score", 0.0)), 4) if p.get("score") is not None else None,
+                record_id=p.get("record_id") or p.get("flex_identifier") or p.get("test_id"),
+            )
+        )
+
+    return AssistantQueryResponse(
+        answer=result.get("answer", ""),
+        mode=result.get("mode", "local_evidence_synthesis"),
+        model_name=result.get("model_name"),
+        dataset_filter=dataset_filter,
+        has_evidence=result.get("has_evidence", False),
+        disclaimer=result.get("disclaimer", ""),
+        fallback_reason=result.get("fallback_reason"),
+        citations=formatted_citations,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 8. Data Inventory & Document Provenance Endpoint
+# -----------------------------------------------------------------------------
+@app.get("/api/inventory", response_model=InventoryResponse, tags=["Inventory"])
+def get_inventory() -> InventoryResponse:
+    """Return verifiable file sizes, checksums, and dataset provenance details."""
+    df = get_df()
+    retriever = get_retriever()
+
+    files_list: List[InventoryItem] = []
+
+    inventory_targets = [
+        (
+            "bass_ii_summary_report.pdf",
+            SUMMARY_PDF_PATH,
+            "Official NASA Technical Memorandum (144 pages)",
+            "Document",
+        ),
+        (
+            "bass_ii_experiments.csv",
+            EXPERIMENTS_CSV_PATH,
+            "126 verified NASA BASS-II experimental flight runs with sensor metrics",
+            "Dataset",
+        ),
+        (
+            "search_index.json",
+            SEARCH_INDEX_JSON_PATH,
+            "318 indexed text passages with document titles, sections, and PDF page numbers",
+            "Index",
+        ),
+        (
+            "FLEX_EIRD_v4.pdf",
+            FLEX_PDF_PATH,
+            "NASA FLEX Experiment Interface and Requirements Document (81 pages)",
+            "Document",
+        ),
+        (
+            "flex_experiments.csv",
+            FLEX_EXPERIMENTS_CSV_PATH,
+            "290 planned science protocol target conditions from NASA FLEX EIRD v4.0 Section 5.3",
+            "Dataset",
+        ),
+        (
+            "flex_experimental_results.csv",
+            FLEX_RESULTS_CSV_PATH,
+            "274 measured as-run microgravity droplet combustion flight records from NASA PSI-69",
+            "Dataset",
+        ),
+    ]
+
+    for filename, filepath, desc, cat in inventory_targets:
+        exists = filepath.exists()
+        size = filepath.stat().st_size if exists else 0
+        files_list.append(
+            InventoryItem(
+                name=filename,
+                path=str(filepath.relative_to(filepath.parent.parent.parent)),
+                size_bytes=size,
+                category=cat,
+                verified=exists and size > 0,
+                description=desc,
+            )
+        )
+
+    return InventoryResponse(
+        indexed_passages=len(retriever.chunks),
+        total_experiments=len(df),
+        technical_report=MISSION_METADATA["technical_report"],
+        doi=MISSION_METADATA["doi"],
+        psi_repository_url=MISSION_METADATA["psi_repository_url"],
+        files=files_list,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 9. Phase 7: Smart Experiment Matcher Endpoint
+# -----------------------------------------------------------------------------
+def classify_experiment_behavior(obs: Optional[str]) -> str:
+    """Classify flight test outcome from NASA observation logbook."""
+    if not obs or pd.isna(obs):
+        return "Observation Recorded"
+    obs_lower = str(obs).lower()
+    if any(w in obs_lower for w in ["extinguish", "quench", "went out", "died", "put out", "self-extinguished"]):
+        return "Extinguished / Quenched"
+    elif any(w in obs_lower for w in ["spread", "burn", "sustained", "steady", "grew", "propagated"]):
+        return "Sustained Flame"
+    return "Observation Recorded"
+
+
+@app.post("/api/insights/match", response_model=ExperimentMatchResponse, tags=["Insights"])
+def match_experiments(criteria: ExperimentMatchCriteria) -> ExperimentMatchResponse:
+    """Search and rank actual NASA BASS-II flight experiments with explainable scientific criteria.
+
+    Scores are transparent condition matching relevance scores (0.0 to 1.0),
+    NEVER a fire-risk probability.
+    """
+    df = get_df()
+    query_text = (criteria.query or "").strip().lower()
+    query_tokens = [w for w in re.findall(r"\w+", query_text) if len(w) > 1]
+
+    results: List[MatchedExperimentItem] = []
+
+    for _, row in df.iterrows():
+        test_id = str(row["test_id"])
+        fuel = str(row.get("fuel_material", ""))
+        mat_cat = str(row.get("material_category", ""))
+        flow_cfg = str(row.get("flow_configuration", ""))
+        obs = str(row.get("observations", "")) if pd.notna(row.get("observations")) else ""
+        behavior = classify_experiment_behavior(obs)
+
+        init_o2 = float(row["calibrated_initial_o2_pct"]) if pd.notna(row.get("calibrated_initial_o2_pct")) else None
+        final_o2 = float(row["calibrated_final_o2_pct"]) if pd.notna(row.get("calibrated_final_o2_pct")) else None
+        delta_o2 = float(row["delta_o2_pct"]) if pd.notna(row.get("delta_o2_pct")) else None
+        delta_co2 = float(row["delta_co2_pct"]) if pd.notna(row.get("delta_co2_pct")) else None
+        final_co = float(row["final_co_ppm"]) if pd.notna(row.get("final_co_ppm")) else None
+        vel_cms = str(row["air_velocity_cms"]) if pd.notna(row.get("air_velocity_cms")) else None
+        vel_num = float(row["air_velocity_numeric"]) if pd.notna(row.get("air_velocity_numeric")) else None
+
+        # 1. Hard filters verification
+        if criteria.material_category and criteria.material_category.lower() != "all":
+            if mat_cat.lower() != criteria.material_category.lower():
+                continue
+
+        if criteria.flow_configuration and criteria.flow_configuration.lower() != "all":
+            if criteria.flow_configuration.lower() not in flow_cfg.lower():
+                continue
+
+        if criteria.flame_behavior and criteria.flame_behavior.lower() != "all":
+            if criteria.flame_behavior.lower() not in behavior.lower():
+                continue
+
+        if criteria.min_initial_o2 is not None:
+            if init_o2 is None or init_o2 < criteria.min_initial_o2:
+                continue
+
+        if criteria.max_initial_o2 is not None:
+            if init_o2 is None or init_o2 > criteria.max_initial_o2:
+                continue
+
+        if criteria.min_air_velocity is not None:
+            if vel_num is None or vel_num < criteria.min_air_velocity:
+                continue
+
+        if criteria.max_air_velocity is not None:
+            if vel_num is None or vel_num > criteria.max_air_velocity:
+                continue
+
+        # 2. Transparent Matching Scoring & Reasons
+        match_reasons: List[str] = []
+        missing_fields: List[str] = []
+        score = 0.30  # Baseline for satisfying all structured filters
+
+        # Check missing instrumentation
+        if vel_num is None:
+            missing_fields.append("Airflow velocity numeric value unrecorded")
+        if final_co is None:
+            missing_fields.append("CO toxic gas sensor uninstrumented")
+        if delta_o2 is None:
+            missing_fields.append("Post-burn oxygen reading uncalibrated")
+
+        # Lexical matching
+        text_corpus = f"{test_id} {fuel} {mat_cat} {flow_cfg} {obs}".lower()
+        matched_tokens_count = 0
+
+        if query_tokens:
+            for token in query_tokens:
+                if token in test_id.lower():
+                    score += 0.40
+                    matched_tokens_count += 1
+                    match_reasons.append(f"Direct match on Test ID: '{test_id}'")
+                elif token in fuel.lower():
+                    score += 0.20
+                    matched_tokens_count += 1
+                    match_reasons.append(f"Fuel material matches search term '{token}': {fuel}")
+                elif token in mat_cat.lower():
+                    score += 0.15
+                    matched_tokens_count += 1
+                    match_reasons.append(f"Material category matches: {mat_cat}")
+                elif token in flow_cfg.lower():
+                    score += 0.15
+                    matched_tokens_count += 1
+                    match_reasons.append(f"Flow geometry matches '{token}': {flow_cfg}")
+                elif token in obs.lower():
+                    score += 0.15
+                    matched_tokens_count += 1
+                    # Extract a snippet
+                    match_reasons.append(f"Observation log describes '{token}'")
+
+            # Check special scientific concepts in query
+            if "low" in query_tokens and "flow" in query_tokens:
+                if vel_num is not None and vel_num <= 5.0:
+                    score += 0.15
+                    match_reasons.append(f"Air velocity ({vel_num} cm/s) falls within quiescent/low-flow regime (<= 5 cm/s)")
+            if "high" in query_tokens and "flow" in query_tokens:
+                if vel_num is not None and vel_num >= 15.0:
+                    score += 0.15
+                    match_reasons.append(f"Air velocity ({vel_num} cm/s) represents high forced-flow regime (>= 15 cm/s)")
+            if "blowoff" in query_tokens and ("blow" in obs.lower() or "pot of" in obs.lower()):
+                score += 0.20
+                match_reasons.append("Astronaut notes describe forced airflow blowoff testing")
+            if "hypoxic" in query_tokens or "low oxygen" in query_text:
+                if init_o2 is not None and init_o2 < 18.0:
+                    score += 0.15
+                    match_reasons.append(f"Sub-ambient initial oxygen ({init_o2}% O2)")
+        else:
+            match_reasons.append("Matches selected experimental criteria and parameter bounds")
+
+        # Deduplicate reasons
+        match_reasons = list(dict.fromkeys(match_reasons))
+        if not match_reasons:
+            match_reasons.append(f"Experiment matches filtered conditions ({fuel}, {flow_cfg})")
+
+        # Determine exact vs partial match
+        is_exact = False
+        if query_tokens:
+            is_exact = (matched_tokens_count >= len(query_tokens)) and (len(missing_fields) == 0)
+        else:
+            is_exact = len(missing_fields) == 0
+
+        # Page hint in NASA/TM-20210011385
+        page_hint = "NASA/TM-20210011385 Appendix A / Table 2.1"
+        if "pmma" in fuel.lower():
+            page_hint = "NASA/TM-20210011385 Section 2.1-2.4 (pp. 13-38)"
+        elif "sibal" in fuel.lower() or "cotton" in fuel.lower():
+            page_hint = "NASA/TM-20210011385 Section 3.1-3.3 (pp. 39-65)"
+        elif "nomex" in fuel.lower():
+            page_hint = "NASA/TM-20210011385 Section 4.0 (pp. 66-82)"
+
+        clamped_score = min(round(score, 3), 0.98 if not is_exact else 1.0)
+
+        results.append(
+            MatchedExperimentItem(
+                test_id=test_id,
+                fuel_material=fuel,
+                material_category=mat_cat,
+                flow_configuration=flow_cfg,
+                air_velocity_cms=vel_cms,
+                air_velocity_numeric=vel_num,
+                calibrated_initial_o2_pct=init_o2,
+                calibrated_final_o2_pct=final_o2,
+                final_co_ppm=final_co,
+                delta_o2_pct=delta_o2,
+                delta_co2_pct=delta_co2,
+                flame_behavior=behavior,
+                observations=obs,
+                total_match_score=clamped_score,
+                is_exact_match=is_exact,
+                match_reasons=match_reasons,
+                missing_fields=missing_fields,
+                source_reference="NASA/TM-20210011385 (BASS-II Final Report)",
+                report_page_hint=page_hint,
+            )
+        )
+
+    # Sort descending by match score
+    results.sort(key=lambda x: x.total_match_score, reverse=True)
+    total_found = len(results)
+    sliced_results = results[: criteria.limit]
+
+    return ExperimentMatchResponse(
+        total_found=total_found,
+        returned_count=len(sliced_results),
+        query_echo=criteria.query,
+        scoring_criteria_explanation=(
+            "Transparent scientific condition matching based on lexical keyword overlap, "
+            "instrumented parameter bounds, and logbook observations. "
+            "Relevance score reflects scientific condition matching, NOT fire-risk probability."
+        ),
+        disclaimer=(
+            "⚠️ Relevance scores indicate how well an experiment matches your scientific inquiry "
+            "parameters. It is NOT a fire-risk probability or safety assessment."
+        ),
+        results=sliced_results,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 10. Phase 7: Scientific Comparison Engine & Evidence-to-Insight Endpoint
+# -----------------------------------------------------------------------------
+@app.post("/api/insights/compare", response_model=ExperimentComparisonResponse, tags=["Insights"])
+def compare_experiments(request: ExperimentComparisonRequest) -> ExperimentComparisonResponse:
+    """Compare 2 to 5 actual NASA microgravity flight experiments with side-by-side data,
+
+    incompatibility warnings, difference calculations, and 4-tier Evidence-to-Insight.
+    Supports BASS-II solid tests, FLEX droplet flight tests, and Cross-Investigation comparisons.
+    """
+    investigation_type = (request.investigation or "bass_ii").lower().strip()
+
+    # =========================================================================
+    # Branch A: FLEX Droplet Flight Results Comparison
+    # =========================================================================
+    if investigation_type in ["flex_results", "flex"]:
+        df_res = get_flex_results_df()
+        raw_ids = [tid.strip() for tid in request.test_ids]
+
+        # Match by integer flex_test_num or flex_identifier
+        matched_rows = []
+        for tid in raw_ids:
+            clean_num_match = re.search(r"(\d+)", tid)
+            row_match = None
+            if clean_num_match:
+                t_num = int(clean_num_match.group(1))
+                m = df_res[df_res["flex_test_num"] == t_num]
+                if not m.empty:
+                    row_match = m.iloc[0]
+            if row_match is None:
+                m = df_res[df_res["flex_identifier"].str.upper() == tid.upper()]
+                if not m.empty:
+                    row_match = m.iloc[0]
+            if row_match is not None and not any(r["flex_test_num"] == row_match["flex_test_num"] for r in matched_rows):
+                matched_rows.append(row_match)
+
+        if len(matched_rows) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At least 2 valid FLEX flight test IDs must be found in PSI-69 (e.g. 114, 115, 1, 2). Requested: {raw_ids}, Found: {[r['flex_test_num'] for r in matched_rows]}",
+            )
+
+        compared_list: List[ComparedExperimentData] = []
+        fuels = set()
+        outcomes = set()
+        missing_k_tests = []
+        has_anomaly_114 = False
+
+        for row in matched_rows:
+            tnum = int(row["flex_test_num"])
+            fid = str(row["flex_identifier"])
+            fuel = str(row["fuel"])
+            p_mmhg = float(row["ambient_pressure_mmhg"]) if pd.notna(row.get("ambient_pressure_mmhg")) else None
+            p_atm = float(row["ambient_pressure_atm"]) if pd.notna(row.get("ambient_pressure_atm")) else None
+            d0 = float(row["droplet_initial_diameter_mm"]) if pd.notna(row.get("droplet_initial_diameter_mm")) else None
+            dext = float(row["visible_flame_extinction_diameter_mm"]) if pd.notna(row.get("visible_flame_extinction_diameter_mm")) else None
+            k = float(row["burning_rate_mm2_s"]) if pd.notna(row.get("burning_rate_mm2_s")) else None
+            tb = float(row["burn_time_s"]) if pd.notna(row.get("burn_time_s")) else None
+            outcome = str(row["test_end_outcome"])
+
+            fuels.add(fuel)
+            outcomes.add(outcome)
+            if k is None:
+                missing_k_tests.append(f"Test #{tnum}")
+            if tnum == 114:
+                has_anomaly_114 = True
+
+            compared_list.append(
+                ComparedExperimentData(
+                    test_id=f"Test #{tnum}",
+                    investigation="FLEX (PSI-69)",
+                    flex_identifier=fid,
+                    fuel=fuel,
+                    fuel_material=fuel,
+                    material_category="Liquid Fuel Droplet",
+                    flow_configuration="Quiescent / Slow Flow",
+                    ambient_pressure_mmhg=p_mmhg,
+                    ambient_pressure_atm=p_atm,
+                    droplet_initial_diameter_mm=d0,
+                    visible_flame_extinction_diameter_mm=dext,
+                    burning_rate_mm2_s=k,
+                    burn_time_s=tb,
+                    test_end_outcome=outcome,
+                    flame_behavior=outcome,
+                    is_anomalous=(tnum == 114),
+                    observations=f"Measured flight droplet combustion in CIR: {outcome} outcome.",
+                )
+            )
+
+        # Warnings for FLEX Droplets
+        warnings: List[ComparisonWarning] = []
+        if len(fuels) > 1:
+            warnings.append(
+                ComparisonWarning(
+                    category="Material Discrepancy",
+                    severity="High",
+                    message=(
+                        f"Comparing distinct liquid fuel classes ({', '.join(fuels)}). "
+                        "Methanol ($CH_3OH$) and n-Heptane ($C_7H_{16}$) possess fundamentally different molecular weights, "
+                        "heats of vaporization, and sooting tendencies. Differences in burning rate cannot be attributed to environmental variables alone."
+                    ),
+                )
+            )
+
+        if has_anomaly_114:
+            warnings.append(
+                ComparisonWarning(
+                    category="Pressure Telemetry Anomaly",
+                    severity="High",
+                    message=(
+                        "FLEX Test #114 is included in this comparison. In NASA's official raw data table, ambient pressure was recorded as 0.0 mmHg. "
+                        "This is physically impossible for a gas-phase flame with 20% O2 and represents an instrument sensor failure. "
+                        "Test #114 must be excluded from pressure-based regression models."
+                    ),
+                )
+            )
+
+        if missing_k_tests:
+            warnings.append(
+                ComparisonWarning(
+                    category="Missing Sensor Data",
+                    severity="Moderate",
+                    message=(
+                        f"Unrecorded burning rates in selected runs: {', '.join(missing_k_tests)}. "
+                        "Burning rates are preserved as nulls and cannot be replaced with zero."
+                    ),
+                )
+            )
+
+        # 4-Tier Insight for FLEX Droplets
+        observed_points: List[str] = []
+        for item in compared_list:
+            anomaly_alert = " [⚠️ ANOMALY: 0.0 mmHg Pressure]" if item.is_anomalous else ""
+            k_str = f"{item.burning_rate_mm2_s} mm²/s" if item.burning_rate_mm2_s is not None else "Unrecorded (null)"
+            d0_str = f"{item.droplet_initial_diameter_mm} mm" if item.droplet_initial_diameter_mm is not None else "Unavailable"
+            dext_str = f"{item.visible_flame_extinction_diameter_mm} mm" if item.visible_flame_extinction_diameter_mm is not None else "Unavailable"
+            p_str = f"{item.ambient_pressure_mmhg} mmHg ({item.ambient_pressure_atm} atm)" if item.ambient_pressure_mmhg is not None else "Unrecorded"
+
+            observed_points.append(
+                f"**{item.test_id} ({item.flex_identifier}, {item.fuel}):** "
+                f"Pressure: {p_str}{anomaly_alert}; "
+                f"Initial Diameter d0: {d0_str}; "
+                f"Extinction Diameter d_ext: {dext_str}; "
+                f"Burning Rate K: {k_str}; "
+                f"Burn Duration: {item.burn_time_s or 'Unrecorded'} s; "
+                f"Outcome: {item.test_end_outcome}."
+            )
+
+        calculated_points: List[str] = []
+        k_valid = [(item.test_id, item.burning_rate_mm2_s) for item in compared_list if item.burning_rate_mm2_s is not None]
+        if len(k_valid) >= 2:
+            diff_k = abs(k_valid[0][1] - k_valid[1][1])
+            calculated_points.append(
+                f"Burning Rate Constant (K) Difference: {k_valid[0][0]} burned at {k_valid[0][1]:.2f} mm²/s vs "
+                f"{k_valid[1][0]} at {k_valid[1][1]:.2f} mm²/s (delta: {diff_k:.2f} mm²/s)."
+            )
+
+        d0_valid = [(item.test_id, item.droplet_initial_diameter_mm) for item in compared_list if item.droplet_initial_diameter_mm is not None]
+        if len(d0_valid) >= 2:
+            diff_d0 = abs(d0_valid[0][1] - d0_valid[1][1])
+            calculated_points.append(
+                f"Initial Droplet Diameter (d0) Delta: {d0_valid[0][0]} was {d0_valid[0][1]:.2f} mm vs "
+                f"{d0_valid[1][0]} at {d0_valid[1][1]:.2f} mm (delta: {diff_d0:.2f} mm)."
+            )
+
+        tb_valid = [(item.test_id, item.burn_time_s) for item in compared_list if item.burn_time_s is not None]
+        if len(tb_valid) >= 2:
+            diff_tb = abs(tb_valid[0][1] - tb_valid[1][1])
+            calculated_points.append(
+                f"Burn Duration Delta: {tb_valid[0][0]} lasted {tb_valid[0][1]:.1f} s vs "
+                f"{tb_valid[1][0]} lasted {tb_valid[1][1]:.1f} s (delta: {diff_tb:.1f} s)."
+            )
+
+        if not calculated_points:
+            calculated_points.append("Direct delta calculation limited due to unrecorded parameters in selected flight runs.")
+
+        interpretation_points: List[str] = []
+        if len(fuels) == 1:
+            fuel_name = list(fuels)[0]
+            interpretation_points.append(
+                f"Consistent fuel substrate ({fuel_name}) isolates environmental effects (ambient pressure, diluent gases, and initial droplet size)."
+            )
+            if "Extinction" in outcomes and "Completion" in outcomes:
+                interpretation_points.append(
+                    "Contrasting Extinction vs Completion outcomes demonstrates that conditions cross the radiative extinction boundary; "
+                    "smaller droplets or lower suppressant fractions sustain burning until full fuel consumption."
+                )
+            elif "Disruption" in outcomes:
+                interpretation_points.append(
+                    "Droplet disruption reflects asymmetric internal vapor bubble growth or tether filament perturbations, "
+                    "causing abrupt breakup before classical d²-law regression finishes."
+                )
+        else:
+            interpretation_points.append(
+                "Comparing Heptane against Methanol introduces divergent sooting regimes. Heptane forms a dense soot shell trapping "
+                "thermal radiation, accelerating droplet gasification while drastically increasing disruption risk (32.5% vs 14.6%)."
+            )
+
+        limitations_points: List[str] = [
+            "Single-run microgravity flight data: Individual test runs reflect specific ISS CIR chamber conditions rather than controlled statistical repetitions.",
+            "Optical diameter measurement uncertainties: Droplet diameter d0 and extinction diameter d_ext were derived from backlight CCD imaging subject to pixel resolution thresholds.",
+            "Unrecorded burning rates: 16 tests in PSI-69 lack burning rate constant K due to disruption or rapid extinction, preserved as true nulls.",
+            "Unresolved count discrepancy: The 274 local flight results vs 275 online PSI catalog entries vs 284 literature tests remains an open archival question.",
+        ]
+
+        citations: List[CitationSource] = [
+            CitationSource(
+                source_file="flex_experimental_results.csv",
+                source_title="NASA PSI-69 FLEX As-Run Flight Experimental Results",
+                source_type="Measured Flight Experimental Dataset",
+                dataset="flex_results",
+                page_num="Table 1",
+                section="FLEX Flight Test Measurements",
+                url="https://psi.nasa.gov/physci/repo/data/investigations/PSI-69",
+                doi_url="https://doi.org/10.60555/k695-k864",
+                content=f"Telemetry for compared FLEX flight tests ({', '.join(raw_ids)}).",
+                score=1.0,
+            ),
+            CitationSource(
+                source_file="FLEX_EIRD_v4.pdf",
+                source_title="NASA FLEX EIRD v4.0",
+                source_type="Requirements Document",
+                dataset="flex_planned",
+                page_num=54,
+                section="Section 5.3 Science Protocol Matrix",
+                url="https://psi.nasa.gov/physci/repo/data/investigations/PSI-69",
+                doi_url="https://doi.org/10.60555/k695-k864",
+                content="Specifies target science protocol conditions and CIR facility interfaces for droplet combustion.",
+                score=0.9,
+            ),
+        ]
+
+        return ExperimentComparisonResponse(
+            test_ids=raw_ids,
+            experiments=compared_list,
+            incompatibility_warnings=warnings,
+            evidence_to_insight=EvidenceToInsightSection(
+                observed_evidence=observed_points,
+                calculated_results=calculated_points,
+                scientific_interpretation=interpretation_points,
+                limitations_and_uncertainties=limitations_points,
+            ),
+            citations=citations,
+            synthesis_mode="offline_evidence_synthesis",
+            disclaimer=(
+                "⚠️ Evidence synthesis derives strictly from verified NASA PSI-69 flight records. "
+                "Informational research only — not for spacecraft operations."
+            ),
+        )
+
+    # =========================================================================
+    # Branch B: Cross-Investigation Methodology Comparison (BASS-II vs FLEX)
+    # =========================================================================
+    elif investigation_type in ["cross_investigation", "cross"]:
+        df_bass = get_df()
+        df_res = get_flex_results_df()
+        raw_ids = [tid.strip() for tid in request.test_ids]
+
+        compared_list: List[ComparedExperimentData] = []
+        for tid in raw_ids:
+            # Check BASS-II first
+            m_bass = df_bass[df_bass["test_id"].astype(str).str.upper() == tid.upper()]
+            if not m_bass.empty:
+                b_row = m_bass.iloc[0]
+                compared_list.append(
+                    ComparedExperimentData(
+                        test_id=str(b_row["test_id"]),
+                        investigation="BASS-II (Solid Polymers)",
+                        fuel_material=str(b_row.get("fuel_material", "")),
+                        material_category=str(b_row.get("material_category", "Solid")),
+                        flow_configuration=str(b_row.get("flow_configuration", "Opposed")),
+                        air_velocity_cms=str(b_row.get("air_velocity_cms", "N/A")),
+                        calibrated_initial_o2_pct=float(b_row["calibrated_initial_o2_pct"]) if pd.notna(b_row.get("calibrated_initial_o2_pct")) else None,
+                        final_co_ppm=float(b_row["final_co_ppm"]) if pd.notna(b_row.get("final_co_ppm")) else None,
+                        flame_behavior=classify_experiment_behavior(str(b_row.get("observations", ""))),
+                        observations=str(b_row.get("observations", "")),
+                    )
+                )
+                continue
+
+            # Check FLEX results
+            clean_num = re.search(r"(\d+)", tid)
+            if clean_num:
+                f_num = int(clean_num.group(1))
+                m_flex = df_res[df_res["flex_test_num"] == f_num]
+                if not m_flex.empty:
+                    f_row = m_flex.iloc[0]
+                    compared_list.append(
+                        ComparedExperimentData(
+                            test_id=f"FLEX #{f_num}",
+                            investigation="FLEX (Liquid Droplets)",
+                            flex_identifier=str(f_row["flex_identifier"]),
+                            fuel=str(f_row["fuel"]),
+                            fuel_material=str(f_row["fuel"]),
+                            material_category="Liquid Droplet",
+                            flow_configuration="Quiescent / Slow Flow",
+                            ambient_pressure_mmhg=float(f_row["ambient_pressure_mmhg"]) if pd.notna(f_row.get("ambient_pressure_mmhg")) else None,
+                            droplet_initial_diameter_mm=float(f_row["droplet_initial_diameter_mm"]) if pd.notna(f_row.get("droplet_initial_diameter_mm")) else None,
+                            burning_rate_mm2_s=float(f_row["burning_rate_mm2_s"]) if pd.notna(f_row.get("burning_rate_mm2_s")) else None,
+                            burn_time_s=float(f_row["burn_time_s"]) if pd.notna(f_row.get("burn_time_s")) else None,
+                            test_end_outcome=str(f_row["test_end_outcome"]),
+                            flame_behavior=str(f_row["test_end_outcome"]),
+                            is_anomalous=(f_num == 114),
+                        )
+                    )
+
+        if len(compared_list) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At least 2 valid experiment IDs across BASS-II and FLEX must be provided (e.g. ['T1', '1']). Requested: {raw_ids}",
+            )
+
+        cross_warnings = [
+            ComparisonWarning(
+                category="Physical Phase & Geometry Mismatch",
+                severity="High",
+                message=(
+                    "Comparing solid fuel flame spread (BASS-II) with liquid droplet combustion (FLEX). "
+                    "Solid fuels burn via surface pyrolysis in 2D/3D geometries with solid charring; "
+                    "liquid droplets burn as isolated spherical diffusion flames governed by d²-law regression."
+                ),
+            ),
+            ComparisonWarning(
+                category="Aerodynamic Facility Discrepancy",
+                severity="High",
+                message=(
+                    "BASS-II tests were conducted inside the Microgravity Science Glovebox (MSG) with forced duct flow (0 to 40 cm/s). "
+                    "FLEX tests were conducted inside the Combustion Integrated Rack (CIR) under quiescent or slow drift flow (0 to 1.5 cm/s)."
+                ),
+            ),
+            ComparisonWarning(
+                category="Incompatible Scientific Metrics",
+                severity="High",
+                message=(
+                    "Droplet burning rate constant (K in mm²/s) cannot be equated with solid flame spread rate or toxic gas emissions (CO ppm). "
+                    "The underlying transport phenomena and conservation equations operate on fundamentally different scales."
+                ),
+            ),
+        ]
+
+        observed_points = [
+            f"**{item.test_id} ({item.investigation}):** Material: {item.fuel_material}; Flow: {item.flow_configuration}; Outcome: {item.flame_behavior}."
+            for item in compared_list
+        ]
+        calculated_points = [
+            "Mathematical delta comparisons are blocked across investigations due to non-commensurable physical metrics (solid flame spread vs droplet d²-law regression)."
+        ]
+        interpretation_points = [
+            "Cross-investigation comparison demonstrates the diversity of NASA physical sciences microgravity research: "
+            "BASS-II evaluates material flammability standards for spacecraft habitat safety, while FLEX validates fundamental droplet combustion extinction physics."
+        ]
+        limitations_points = [
+            "Distinct flight campaigns: FLEX operated 2009–2011; BASS-II operated 2012–2014.",
+            "Separate datasets: Do not merge records into a single experimental table.",
+        ]
+
+        citations = [
+            CitationSource(
+                source_file="bass_ii_summary_report.pdf",
+                source_title="NASA BASS-II Technical Report (TM-20210011385)",
+                source_type="Technical Report",
+                dataset="bass_ii",
+                page_num=5,
+                section="Solid Combustion Overview",
+                url=MISSION_METADATA["psi_repository_url"],
+                doi_url=f"https://doi.org/{MISSION_METADATA['doi']}",
+                content="BASS-II solid combustion in MSG under forced airflow.",
+                score=1.0,
+            ),
+            CitationSource(
+                source_file="flex_experimental_results.csv",
+                source_title="NASA PSI-69 FLEX As-Run Flight Results",
+                source_type="Flight Dataset",
+                dataset="flex_results",
+                page_num="Table 1",
+                section="Droplet Combustion Overview",
+                url="https://psi.nasa.gov/physci/repo/data/investigations/PSI-69",
+                doi_url="https://doi.org/10.60555/k695-k864",
+                content="FLEX droplet combustion in CIR under quiescent conditions.",
+                score=1.0,
+            ),
+        ]
+
+        return ExperimentComparisonResponse(
+            test_ids=raw_ids,
+            experiments=compared_list,
+            incompatibility_warnings=cross_warnings,
+            evidence_to_insight=EvidenceToInsightSection(
+                observed_evidence=observed_points,
+                calculated_results=calculated_points,
+                scientific_interpretation=interpretation_points,
+                limitations_and_uncertainties=limitations_points,
+            ),
+            citations=citations,
+            synthesis_mode="offline_evidence_synthesis",
+            disclaimer="⚠️ Cross-investigation analysis is for methodology comparison only — metrics are physically non-commensurable.",
+        )
+
+    # =========================================================================
+    # Branch C: BASS-II Solid Experiments Comparison (Default / Preserved)
+    # =========================================================================
+    df = get_df()
+    requested_ids = [tid.strip().upper() for tid in request.test_ids]
+
+    # Filter dataframe
+    matched_df = df[df["test_id"].astype(str).str.upper().isin(requested_ids)]
+    if len(matched_df) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At least 2 valid experiment IDs must be found. Requested: {requested_ids}, Found: {matched_df['test_id'].tolist()}",
+        )
+
+    compared_list: List[ComparedExperimentData] = []
+    materials = set()
+    material_cats = set()
+    flow_cfgs = set()
+    missing_telemetry = []
+
+    for _, row in matched_df.iterrows():
+        tid = str(row["test_id"])
+        fuel = str(row.get("fuel_material", ""))
+        mat_cat = str(row.get("material_category", ""))
+        flow_cfg = str(row.get("flow_configuration", ""))
+        obs = str(row.get("observations", "")) if pd.notna(row.get("observations")) else ""
+        behavior = classify_experiment_behavior(obs)
+
+        materials.add(fuel)
+        material_cats.add(mat_cat)
+        flow_cfgs.add(flow_cfg)
+
+        init_o2 = float(row["calibrated_initial_o2_pct"]) if pd.notna(row.get("calibrated_initial_o2_pct")) else None
+        final_o2 = float(row["calibrated_final_o2_pct"]) if pd.notna(row.get("calibrated_final_o2_pct")) else None
+        init_co2 = float(row["initial_co2_pct"]) if pd.notna(row.get("initial_co2_pct")) else None
+        final_co2 = float(row["final_co2_pct"]) if pd.notna(row.get("final_co2_pct")) else None
+        delta_co2 = float(row["delta_co2_pct"]) if pd.notna(row.get("delta_co2_pct")) else None
+        init_co = float(row["initial_co_ppm"]) if pd.notna(row.get("initial_co_ppm")) else None
+        final_co = float(row["final_co_ppm"]) if pd.notna(row.get("final_co_ppm")) else None
+        delta_co = float(row["delta_co_ppm"]) if pd.notna(row.get("delta_co_ppm")) else None
+        delta_o2 = float(row["delta_o2_pct"]) if pd.notna(row.get("delta_o2_pct")) else None
+        vel_cms = str(row["air_velocity_cms"]) if pd.notna(row.get("air_velocity_cms")) else None
+        vel_num = float(row["air_velocity_numeric"]) if pd.notna(row.get("air_velocity_numeric")) else None
+        restrictor = str(row["flow_restrictor"]) if pd.notna(row.get("flow_restrictor")) else None
+
+        if vel_num is None:
+            missing_telemetry.append(f"Test {tid} lacks numeric velocity")
+        if final_co is None:
+            missing_telemetry.append(f"Test {tid} lacks CO toxic gas telemetry")
+
+        compared_list.append(
+            ComparedExperimentData(
+                test_id=tid,
+                investigation="BASS-II (PSI-25)",
+                fuel_material=fuel,
+                material_category=mat_cat,
+                flow_configuration=flow_cfg,
+                flow_restrictor=restrictor,
+                air_velocity_cms=vel_cms,
+                air_velocity_numeric=vel_num,
+                calibrated_initial_o2_pct=init_o2,
+                calibrated_final_o2_pct=final_o2,
+                initial_co2_pct=init_co2,
+                final_co2_pct=final_co2,
+                delta_co2_pct=delta_co2,
+                initial_co_ppm=init_co,
+                final_co_ppm=final_co,
+                delta_co_ppm=delta_co,
+                delta_o2_pct=delta_o2,
+                flame_behavior=behavior,
+                observations=obs,
+            )
+        )
+
+    # 1. Evaluate Scientific Incompatibility Warnings
+    warnings: List[ComparisonWarning] = []
+
+    if len(material_cats) > 1:
+        warnings.append(
+            ComparisonWarning(
+                category="Material Discrepancy",
+                severity="High",
+                message=(
+                    f"Comparing distinct material classes ({', '.join(material_cats)}). "
+                    "Different polymers possess fundamentally distinct heats of combustion, "
+                    "pyrolysis temperatures, and thermal decomposition chemistries. "
+                    "Differences in flame behavior cannot be attributed solely to airflow or oxygen."
+                ),
+            )
+        )
+    elif len(materials) > 1:
+        warnings.append(
+            ComparisonWarning(
+                category="Fuel Geometry / Thickness Difference",
+                severity="Moderate",
+                message=(
+                    f"Comparing different fuel thicknesses or geometries within the same material: {', '.join(materials)}. "
+                    "Thermal inertia varies significantly between thin films (thermally thin) and solid cylinders (thermally thick)."
+                ),
+            )
+        )
+
+    if len(flow_cfgs) > 1:
+        warnings.append(
+            ComparisonWarning(
+                category="Aerodynamic Mismatch",
+                severity="Moderate",
+                message=(
+                    f"Comparing different flow vectors: {', '.join(flow_cfgs)}. "
+                    "Opposed flow forces flame spread against incoming oxidizer creating stagnation zones, "
+                    "while Concurrent flow spreads downstream with the flow, altering residence times."
+                ),
+            )
+        )
+
+    if missing_telemetry:
+        warnings.append(
+            ComparisonWarning(
+                category="Missing Sensor Data",
+                severity="Informational",
+                message=f"Missing telemetry in selected runs: {'; '.join(missing_telemetry)}.",
+            )
+        )
+
+    for item in compared_list:
+        if item.observations and ("broke" in item.observations.lower() or "igniter" in item.observations.lower() and "fail" in item.observations.lower()):
+            warnings.append(
+                ComparisonWarning(
+                    category="Hardware Complication",
+                    severity="Informational",
+                    message=f"Test {item.test_id} astronaut log mentions hardware interference: '{item.observations}'.",
+                )
+            )
+
+    # 2. Build 4-Tier Evidence-to-Insight Summary
+    # Tier 1: Observed Evidence
+    observed_points: List[str] = []
+    for item in compared_list:
+        obs_summary = (
+            f"**Test {item.test_id} ({item.fuel_material}, {item.flow_configuration}):** "
+            f"Airflow: {item.air_velocity_cms or 'Unrecorded'}; "
+            f"Initial O2: {item.calibrated_initial_o2_pct or 'N/A'}% vol; "
+            f"Final CO: {item.final_co_ppm if item.final_co_ppm is not None else 'Uninstrumented'} ppm; "
+            f"Outcome: {item.flame_behavior}. "
+            f"NASA Log: \"{item.observations or 'No specific qualitative notes.'}\""
+        )
+        observed_points.append(obs_summary)
+
+    # Tier 2: Calculated Results
+    calculated_points: List[str] = []
+    o2_deltas = [(item.test_id, item.delta_o2_pct) for item in compared_list if item.delta_o2_pct is not None]
+    if len(o2_deltas) >= 2:
+        diff_o2 = abs(o2_deltas[0][1] - o2_deltas[1][1])
+        calculated_points.append(
+            f"Oxygen consumed during test: {o2_deltas[0][0]} consumed {o2_deltas[0][1]:.2f}% O2 vs "
+            f"{o2_deltas[1][0]} consumed {o2_deltas[1][1]:.2f}% O2 (absolute difference: {diff_o2:.2f}% O2)."
+        )
+
+    co_values = [(item.test_id, item.final_co_ppm) for item in compared_list if item.final_co_ppm is not None]
+    if len(co_values) >= 2:
+        diff_co = abs(co_values[0][1] - co_values[1][1])
+        calculated_points.append(
+            f"Toxic Carbon Monoxide yield: {co_values[0][0]} emitted {co_values[0][1]:.1f} ppm vs "
+            f"{co_values[1][0]} emitted {co_values[1][1]:.1f} ppm (difference: {diff_co:.1f} ppm)."
+        )
+
+    vel_values = [(item.test_id, item.air_velocity_numeric) for item in compared_list if item.air_velocity_numeric is not None]
+    if len(vel_values) >= 2:
+        calculated_points.append(
+            f"Forced flow velocity: {vel_values[0][0]} ran at {vel_values[0][1]:.1f} cm/s vs "
+            f"{vel_values[1][0]} ran at {vel_values[1][1]:.1f} cm/s."
+        )
+
+    if not calculated_points:
+        calculated_points.append("Direct mathematical delta comparison limited due to uninstrumented gas sensors in selected runs.")
+
+    # Tier 3: Scientific Interpretation
+    interpretation_points: List[str] = []
+    if len(material_cats) == 1:
+        mat = list(material_cats)[0]
+        interpretation_points.append(
+            f"Consistent fuel substrate ({mat}) allows isolating environmental variables (airflow and oxygen concentration)."
+        )
+        if any(item.flame_behavior == "Extinguished / Quenched" for item in compared_list) and any(item.flame_behavior == "Sustained Flame" for item in compared_list):
+            interpretation_points.append(
+                "Divergent extinction vs sustained outcomes suggest that the conditions straddle the critical flammability boundary. "
+                "In microgravity, low airflow (< 5 cm/s) deprives the flame of convective oxygen transport, "
+                "while radiative heat loss from soot quenches combustion."
+            )
+    else:
+        interpretation_points.append(
+            "Different fuel substrates prevent attributing flame survival differences to environmental parameters alone; "
+            "pyrolysis kinetics and surface charring behaviors dictate fuel gasification rates."
+        )
+
+    # Tier 4: Documented Limitations
+    limitations_points: List[str] = [
+        "Single-run microgravity flight data: Experiments on the ISS BASS-II flight matrix represent individual exploratory test points rather than statistical repeated trials.",
+        "Ambient glovebox environment: Microgravity Combustion Integration Rack (CIR) glovebox pressure and temperature exhibited slight operational drift between crew work days.",
+        "Unobserved gas flow fields: Hot-wire anemometer readings reflect upstream duct air velocity, not local 3D flow perturbations around the burning sample.",
+        "Absence of controlled causality: Do NOT conclude that a single parameter caused flame extinction without verifying identical igniter heating durations and fuel surface geometry.",
+    ]
+
+    retriever = NASARetriever()
+    query_str = f"BASS-II microgravity combustion {' '.join(materials)} {' '.join(flow_cfgs)}"
+    passages = retriever.retrieve(query_str, top_k=3, dataset_filter="bass_ii")
+
+    citations: List[CitationSource] = []
+    for p in passages:
+        citations.append(
+            CitationSource(
+                chunk_id=p.get("chunk_id"),
+                source_file=p.get("source_file", "bass_ii_summary_report.pdf"),
+                source_title=p.get("source_title", "NASA BASS-II Technical Summary Report"),
+                source_type=p.get("source_type", "NASA Technical Memorandum"),
+                dataset="bass_ii",
+                page_num=p.get("page_num"),
+                section=p.get("section"),
+                url=p.get("url", MISSION_METADATA["psi_repository_url"]),
+                doi_url=p.get("doi_url") or MISSION_METADATA.get("doi_url", "https://doi.org/10.60555/4qc4-de67"),
+                content=p.get("content", ""),
+                score=p.get("relevance_score"),
+            )
+        )
+
+    return ExperimentComparisonResponse(
+        test_ids=requested_ids,
+        experiments=compared_list,
+        incompatibility_warnings=warnings,
+        evidence_to_insight=EvidenceToInsightSection(
+            observed_evidence=observed_points,
+            calculated_results=calculated_points,
+            scientific_interpretation=interpretation_points,
+            limitations_and_uncertainties=limitations_points,
+        ),
+        citations=citations,
+        synthesis_mode="offline_evidence_synthesis",
+        disclaimer=(
+            "⚠️ Evidence synthesis derives strictly from verified NASA BASS-II data and documents. "
+            "It must not be used for operational spacecraft safety certifications."
+        ),
+    )
+
+
+# -----------------------------------------------------------------------------
+# FLEX Protocol Explorer Endpoints (NASA PSI-69)
+# -----------------------------------------------------------------------------
+@app.get("/api/flex/summary", response_model=FlexSummaryResponse)
+async def get_flex_summary():
+    """
+    Returns summary statistics for the 290 planned science protocol conditions
+    extracted from NASA FLEX_EIRD_v4.pdf Section 5.3.
+    """
+    df = get_flex_df()
+
+    unique_fuels = sorted(df["fuel"].dropna().unique().tolist())
+    unique_suppressants = sorted(df["suppressant"].dropna().unique().tolist())
+    unique_pressures = sorted(df["pressure_atm"].dropna().unique().tolist())
+
+    fuel_counts = df["fuel"].value_counts().to_dict()
+    suppressant_counts = df["suppressant"].value_counts().to_dict()
+    pressure_counts = {str(k): int(v) for k, v in df["pressure_atm"].value_counts().items()}
+    fiber_supports = df["fiber_support"].value_counts().to_dict()
+    flow_velocities = {f"{k} cm/s": int(v) for k, v in df["flow_velocity_cms"].value_counts().items()}
+
+    return FlexSummaryResponse(
+        total_planned_conditions=len(df),
+        unique_fuels=unique_fuels,
+        unique_suppressants=unique_suppressants,
+        unique_pressures=unique_pressures,
+        min_pressure_atm=float(df["pressure_atm"].min()),
+        max_pressure_atm=float(df["pressure_atm"].max()),
+        min_oxygen_fraction=float(df["oxygen_mole_fraction"].min()),
+        max_oxygen_fraction=float(df["oxygen_mole_fraction"].max()),
+        fiber_supports=fiber_supports,
+        flow_velocities=flow_velocities,
+        fuel_counts=fuel_counts,
+        suppressant_counts=suppressant_counts,
+        pressure_counts=pressure_counts,
+        source_document="NASA FLEX_EIRD_v4.pdf",
+        source_section="Section 5.3 Detailed Science Test Matrix (Tables 6–12)",
+        source_pages="Pages 46–55",
+        disclaimer=(
+            "NASA FLEX — Planned Science Protocol Matrix: 290 planned test conditions "
+            "extracted from NASA FLEX_EIRD_v4.pdf. These are specified conditions, not measured flight outcomes."
+        ),
+        nitrogen_derived_note=(
+            "Nitrogen mole fraction is a derived value calculated as 1.0 - (X_O2 + X_suppressant), "
+            "representing the inert diluent balance gas specified in Section 5.3."
+        ),
+    )
+
+
+@app.get("/api/flex/conditions", response_model=FlexConditionListResponse)
+async def get_flex_conditions(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(25, ge=1, le=290, description="Records per page"),
+    fuel: Optional[str] = Query(None, description="Filter by fuel material"),
+    suppressant: Optional[str] = Query(None, description="Filter by chemical suppressant"),
+    min_pressure: Optional[float] = Query(None, description="Minimum chamber pressure (atm)"),
+    max_pressure: Optional[float] = Query(None, description="Maximum chamber pressure (atm)"),
+    min_o2: Optional[float] = Query(None, description="Minimum oxygen mole fraction"),
+    max_o2: Optional[float] = Query(None, description="Maximum oxygen mole fraction"),
+    fiber_support: Optional[str] = Query(None, description="Filter by fiber suspension mode"),
+    search: Optional[str] = Query(None, description="Keyword search in conditions"),
+):
+    """
+    Search and filter planned test condition records from the FLEX protocol matrix.
+    """
+    df = get_flex_df().copy()
+
+    if fuel:
+        df = df[df["fuel"].str.contains(fuel, case=False, na=False)]
+    if suppressant:
+        df = df[df["suppressant"].str.contains(suppressant, case=False, na=False)]
+    if min_pressure is not None:
+        df = df[df["pressure_atm"] >= min_pressure]
+    if max_pressure is not None:
+        df = df[df["pressure_atm"] <= max_pressure]
+    if min_o2 is not None:
+        df = df[df["oxygen_mole_fraction"] >= min_o2]
+    if max_o2 is not None:
+        df = df[df["oxygen_mole_fraction"] <= max_o2]
+    if fiber_support:
+        df = df[df["fiber_support"].str.contains(fiber_support, case=False, na=False)]
+    if search:
+        s = search.lower().strip()
+        mask = (
+            df["test_no"].astype(str).str.contains(s)
+            | df["fuel"].str.lower().str.contains(s)
+            | df["suppressant"].str.lower().str.contains(s)
+            | df["fiber_support"].str.lower().str.contains(s)
+            | df["pressure_atm"].astype(str).str.contains(s)
+        )
+        df = df[mask]
+
+    total = len(df)
+    total_pages = max(1, math.ceil(total / limit))
+    offset = (page - 1) * limit
+    paged_df = df.iloc[offset : offset + limit]
+
+    records = []
+    for _, row in paged_df.iterrows():
+        records.append(
+            FlexConditionRecord(
+                test_no=int(row["test_no"]),
+                investigation=str(row.get("investigation", "FLEX (Droplet Combustion)")),
+                fuel=str(row["fuel"]),
+                diluent=str(row.get("diluent", "N2")),
+                suppressant=str(row["suppressant"]),
+                fiber_support=str(row["fiber_support"]),
+                flow_velocity_cms=float(row.get("flow_velocity_cms", 0.0)),
+                initial_droplet_diameters_mm=str(row.get("initial_droplet_diameters_mm", "3, 5 mm")),
+                pressure_atm=float(row["pressure_atm"]),
+                oxygen_mole_fraction=float(row["oxygen_mole_fraction"]),
+                suppressant_mole_fraction=float(row["suppressant_mole_fraction"]),
+                nitrogen_mole_fraction=float(row["nitrogen_mole_fraction"]),
+                source_document=str(row.get("source_document", "NASA FLEX_EIRD_v4.pdf")),
+                source_section=str(row.get("source_section", "Section 5.3 Detailed Science Test Matrix")),
+                source_page=int(row.get("source_page", 46)),
+                record_type=str(row.get("record_type", "Planned Science Protocol Matrix (Requirements Specification)")),
+            )
+        )
+
+    return FlexConditionListResponse(
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
+        conditions=records,
+    )
+
+
+@app.get("/api/flex/analytics", response_model=FlexAnalyticsResponse)
+async def get_flex_analytics():
+    """
+    Returns distributions and matrix comparison points for planned conditions.
+    Explicitly labeled as planned protocol specifications.
+    """
+    df = get_flex_df()
+
+    # Pressure distribution
+    p_dist = (
+        df.groupby("pressure_atm")
+        .size()
+        .reset_index(name="count")
+        .rename(columns={"pressure_atm": "pressure"})
+        .sort_values("pressure")
+        .to_dict(orient="records")
+    )
+
+    # Suppressant distribution
+    s_dist = (
+        df.groupby("suppressant")
+        .size()
+        .reset_index(name="count")
+        .to_dict(orient="records")
+    )
+
+    # Oxygen distribution
+    o_dist = (
+        df.groupby("oxygen_mole_fraction")
+        .size()
+        .reset_index(name="count")
+        .rename(columns={"oxygen_mole_fraction": "oxygen_fraction"})
+        .sort_values("oxygen_fraction")
+        .to_dict(orient="records")
+    )
+
+    # Fuel breakdown
+    f_dist = (
+        df.groupby("fuel")
+        .size()
+        .reset_index(name="count")
+        .to_dict(orient="records")
+    )
+
+    # Scatter points: Planned chamber pressure vs Planned oxygen mole fraction
+    scatter_pts = []
+    for _, r in df.iterrows():
+        scatter_pts.append({
+            "test_no": int(r["test_no"]),
+            "pressure_atm": float(r["pressure_atm"]),
+            "oxygen_mole_fraction": float(r["oxygen_mole_fraction"]),
+            "suppressant_mole_fraction": float(r["suppressant_mole_fraction"]),
+            "nitrogen_mole_fraction": float(r["nitrogen_mole_fraction"]),
+            "suppressant": str(r["suppressant"]),
+            "fuel": str(r["fuel"]),
+            "fiber_support": str(r["fiber_support"]),
+            "flow_velocity_cms": float(r.get("flow_velocity_cms", 0.0)),
+            "source_page": int(r.get("source_page", 46)),
+        })
+
+    return FlexAnalyticsResponse(
+        pressure_distribution=p_dist,
+        suppressant_distribution=s_dist,
+        oxygen_distribution=o_dist,
+        fuel_breakdown=f_dist,
+        matrix_scatter_points=scatter_pts,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Phase 11: NASA PSI-69 FLEX Flight Experimental Results Endpoints
+# -----------------------------------------------------------------------------
+@app.get("/api/flex-results/summary", response_model=FlexResultSummaryResponse, tags=["FLEX Results"])
+async def get_flex_results_summary():
+    """
+    Returns summary metrics, outcome breakdowns, and data quality notices
+    for all 274 measured NASA PSI-69 FLEX microgravity droplet combustion tests.
+    """
+    df = get_flex_results_df()
+
+    fuel_counts = {str(k): int(v) for k, v in df["fuel"].value_counts().items()}
+    outcome_counts = {str(k): int(v) for k, v in df["test_end_outcome"].value_counts().items()}
+
+    p_valid = df["ambient_pressure_mmhg"].dropna()
+    br_valid = df["burning_rate_mm2_s"].dropna()
+    bt_valid = df["burn_time_s"].dropna()
+    d0_valid = df["droplet_initial_diameter_mm"].dropna()
+
+    missing_field_counts = {
+        "droplet_initial_diameter_mm": int(df["droplet_initial_diameter_mm"].isna().sum()),
+        "visible_flame_extinction_diameter_mm": int(df["visible_flame_extinction_diameter_mm"].isna().sum()),
+        "burning_rate_mm2_s": int(df["burning_rate_mm2_s"].isna().sum()),
+        "burn_time_s": int(df["burn_time_s"].isna().sum()),
+        "test_gmt": int(df["test_gmt"].isna().sum() + (df["test_gmt"] == "").sum()),
+    }
+
+    return FlexResultSummaryResponse(
+        total_flight_records=len(df),
+        fuel_counts=fuel_counts,
+        outcome_counts=outcome_counts,
+        min_pressure_mmhg=float(p_valid.min()) if not p_valid.empty else 0.0,
+        max_pressure_mmhg=float(p_valid.max()) if not p_valid.empty else 0.0,
+        min_burning_rate_mm2_s=float(br_valid.min()) if not br_valid.empty else None,
+        max_burning_rate_mm2_s=float(br_valid.max()) if not br_valid.empty else None,
+        mean_burning_rate_mm2_s=round(float(br_valid.mean()), 4) if not br_valid.empty else None,
+        min_burn_time_s=float(bt_valid.min()) if not bt_valid.empty else None,
+        max_burn_time_s=float(bt_valid.max()) if not bt_valid.empty else None,
+        min_droplet_diameter_mm=float(d0_valid.min()) if not d0_valid.empty else None,
+        max_droplet_diameter_mm=float(d0_valid.max()) if not d0_valid.empty else None,
+        missing_field_counts=missing_field_counts,
+        test_114_anomaly={
+            "flex_test_num": 114,
+            "flex_identifier": "C11M201",
+            "ambient_pressure_mmhg": 0.0,
+            "fuel": "Methanol",
+            "test_date": "9/6/2010",
+            "warning": (
+                "Test #114 recorded ambient pressure as 0.0 mmHg in the official NASA PSI-69 table. "
+                "In fluid mechanics and combustion physics, liquid droplets cannot burn in a total vacuum (0 mmHg). "
+                "This indicates an upstream sensor dropout or unrecorded transducer measurement. "
+                "The original 0.0 value is preserved without alteration, but is excluded from physical pressure regressions by default."
+            ),
+            "surrounding_nominal_pressure_mmhg": "~534 mmHg (0.70 atm)",
+        },
+        unresolved_counts_notice={
+            "local_csv_records": 274,
+            "nasa_psi_web_catalog_entries": 275,
+            "nasa_technical_report_tests": 284,
+            "status": "Unresolved",
+            "explanation": (
+                "The locally downloaded CSV contains 274 data rows (275 physical lines including header). "
+                "The NASA PSI portal displays '275 entries', and NASA publication NTRS 20150023456 cites the 'first 284 tests'. "
+                "Because backend portal queries and full-text flight logs for tests 275–284 are not available locally, "
+                "these count differences remain explicitly unresolved without speculative assumptions."
+            ),
+        },
+        source_file="data/processed/flex_experimental_results.csv",
+        disclaimer=(
+            "NASA PSI-69 FLEX Flight Results: 274 measured droplet combustion experiments from ISS operations (2009–2011). "
+            "These are actual as-run flight telemetry and photographic measurements, completely separate from the 290 planned protocol specifications."
+        ),
+    )
+
+
+@app.get("/api/flex-results/records", response_model=FlexResultListResponse, tags=["FLEX Results"])
+async def get_flex_results_records(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(25, ge=1, le=274, description="Records per page"),
+    fuel: Optional[str] = Query(None, description="Filter by fuel (Methanol, Heptane)"),
+    outcome: Optional[str] = Query(None, description="Filter by test end outcome (Extinction, Disruption, Completion)"),
+    min_pressure_mmhg: Optional[float] = Query(None, description="Minimum ambient pressure (mmHg)"),
+    max_pressure_mmhg: Optional[float] = Query(None, description="Maximum ambient pressure (mmHg)"),
+    min_o2: Optional[float] = Query(None, description="Minimum oxygen mole fraction"),
+    max_o2: Optional[float] = Query(None, description="Maximum oxygen mole fraction"),
+    min_burning_rate: Optional[float] = Query(None, description="Minimum burning rate (mm²/s)"),
+    max_burning_rate: Optional[float] = Query(None, description="Maximum burning rate (mm²/s)"),
+    search: Optional[str] = Query(None, description="Search by Test #, Identifier, fuel, outcome, or date"),
+):
+    """
+    Search, filter, and paginate through verified NASA PSI-69 FLEX experimental results.
+    Preserves missing values as null and highlights data anomalies (such as Test #114).
+    """
+    df = get_flex_results_df().copy()
+
+    if fuel:
+        df = df[df["fuel"].str.contains(fuel, case=False, na=False)]
+    if outcome:
+        df = df[df["test_end_outcome"].str.contains(outcome, case=False, na=False)]
+    if min_pressure_mmhg is not None:
+        df = df[df["ambient_pressure_mmhg"] >= min_pressure_mmhg]
+    if max_pressure_mmhg is not None:
+        df = df[df["ambient_pressure_mmhg"] <= max_pressure_mmhg]
+    if min_o2 is not None:
+        df = df[df["initial_o2_mole_fraction"] >= min_o2]
+    if max_o2 is not None:
+        df = df[df["initial_o2_mole_fraction"] <= max_o2]
+    if min_burning_rate is not None:
+        df = df[df["burning_rate_mm2_s"].notna() & (df["burning_rate_mm2_s"] >= min_burning_rate)]
+    if max_burning_rate is not None:
+        df = df[df["burning_rate_mm2_s"].notna() & (df["burning_rate_mm2_s"] <= max_burning_rate)]
+    if search:
+        s = search.lower().strip()
+        mask = (
+            df["flex_test_num"].astype(str).str.contains(s)
+            | df["flex_identifier"].str.lower().str.contains(s)
+            | df["fuel"].str.lower().str.contains(s)
+            | df["test_date"].str.lower().str.contains(s)
+            | df["test_end_outcome"].str.lower().str.contains(s)
+        )
+        df = df[mask]
+
+    total = len(df)
+    total_pages = max(1, math.ceil(total / limit))
+    offset = (page - 1) * limit
+    paged_df = df.iloc[offset : offset + limit]
+
+    records: List[FlexResultRecord] = []
+    for _, row in paged_df.iterrows():
+        t_num = int(row["flex_test_num"])
+        p_val = float(row["ambient_pressure_mmhg"])
+        is_t114 = t_num == 114 or p_val == 0.0
+
+        records.append(
+            FlexResultRecord(
+                flex_test_num=t_num,
+                flex_identifier=str(row["flex_identifier"]).strip(),
+                test_date=str(row["test_date"]).strip(),
+                test_gmt=str(row["test_gmt"]).strip() if pd.notna(row["test_gmt"]) and str(row["test_gmt"]).strip() else None,
+                fuel=str(row["fuel"]).strip(),
+                ambient_pressure_mmhg=p_val,
+                ambient_pressure_atm=float(row["ambient_pressure_atm"]),
+                initial_o2_mole_fraction=float(row["initial_o2_mole_fraction"]),
+                initial_n2_mole_fraction=float(row["initial_n2_mole_fraction"]),
+                initial_co2_mole_fraction=float(row["initial_co2_mole_fraction"]),
+                initial_he_mole_fraction=float(row["initial_he_mole_fraction"]),
+                droplet_initial_diameter_mm=float(row["droplet_initial_diameter_mm"]) if pd.notna(row["droplet_initial_diameter_mm"]) else None,
+                visible_flame_extinction_diameter_mm=float(row["visible_flame_extinction_diameter_mm"]) if pd.notna(row["visible_flame_extinction_diameter_mm"]) else None,
+                burning_rate_mm2_s=float(row["burning_rate_mm2_s"]) if pd.notna(row["burning_rate_mm2_s"]) else None,
+                burn_time_s=float(row["burn_time_s"]) if pd.notna(row["burn_time_s"]) else None,
+                burn_time_raw=str(row["burn_time_raw"]).strip() if pd.notna(row["burn_time_raw"]) and str(row["burn_time_raw"]).strip() else None,
+                test_end_outcome=str(row["test_end_outcome"]).strip(),
+                investigation=str(row.get("investigation", "FLEX (Droplet Combustion)")),
+                source_file=str(row.get("source_file", "NASA PSI-69_Experimental table_FLEX.csv")),
+                record_type=str(row.get("record_type", "As-Run Flight Experimental Results")),
+                has_pressure_warning=is_t114,
+                pressure_warning_detail=(
+                    "Test #114 recorded ambient pressure of 0.0 mmHg in NASA PSI-69 source file. "
+                    "Combustion cannot occur in a vacuum; this is an upstream unrecorded transducer measurement. "
+                    "Excluded from pressure scaling regressions by default."
+                    if is_t114
+                    else None
+                ),
+            )
+        )
+
+    return FlexResultListResponse(
+        total=total,
+        page=page,
+        limit=limit,
+        total_pages=total_pages,
+        records=records,
+    )
+
+
+@app.get("/api/flex-results/records/{test_num}", response_model=FlexResultRecord, tags=["FLEX Results"])
+async def get_single_flex_result(test_num: int):
+    """
+    Look up a single FLEX experimental flight record by its flight sequence index (1 to 274).
+    """
+    df = get_flex_results_df()
+    match = df[df["flex_test_num"] == test_num]
+    if match.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"FLEX flight test #{test_num} not found. Valid test indices range from 1 to 274.",
+        )
+
+    row = match.iloc[0]
+    p_val = float(row["ambient_pressure_mmhg"])
+    is_t114 = int(row["flex_test_num"]) == 114 or p_val == 0.0
+
+    return FlexResultRecord(
+        flex_test_num=int(row["flex_test_num"]),
+        flex_identifier=str(row["flex_identifier"]).strip(),
+        test_date=str(row["test_date"]).strip(),
+        test_gmt=str(row["test_gmt"]).strip() if pd.notna(row["test_gmt"]) and str(row["test_gmt"]).strip() else None,
+        fuel=str(row["fuel"]).strip(),
+        ambient_pressure_mmhg=p_val,
+        ambient_pressure_atm=float(row["ambient_pressure_atm"]),
+        initial_o2_mole_fraction=float(row["initial_o2_mole_fraction"]),
+        initial_n2_mole_fraction=float(row["initial_n2_mole_fraction"]),
+        initial_co2_mole_fraction=float(row["initial_co2_mole_fraction"]),
+        initial_he_mole_fraction=float(row["initial_he_mole_fraction"]),
+        droplet_initial_diameter_mm=float(row["droplet_initial_diameter_mm"]) if pd.notna(row["droplet_initial_diameter_mm"]) else None,
+        visible_flame_extinction_diameter_mm=float(row["visible_flame_extinction_diameter_mm"]) if pd.notna(row["visible_flame_extinction_diameter_mm"]) else None,
+        burning_rate_mm2_s=float(row["burning_rate_mm2_s"]) if pd.notna(row["burning_rate_mm2_s"]) else None,
+        burn_time_s=float(row["burn_time_s"]) if pd.notna(row["burn_time_s"]) else None,
+        burn_time_raw=str(row["burn_time_raw"]).strip() if pd.notna(row["burn_time_raw"]) and str(row["burn_time_raw"]).strip() else None,
+        test_end_outcome=str(row["test_end_outcome"]).strip(),
+        investigation=str(row.get("investigation", "FLEX (Droplet Combustion)")),
+        source_file=str(row.get("source_file", "NASA PSI-69_Experimental table_FLEX.csv")),
+        record_type=str(row.get("record_type", "As-Run Flight Experimental Results")),
+        has_pressure_warning=is_t114,
+        pressure_warning_detail=(
+            "Test #114 recorded ambient pressure of 0.0 mmHg in NASA PSI-69 source file. "
+            "Combustion cannot occur in a vacuum; this is an upstream unrecorded transducer measurement. "
+            "Excluded from pressure scaling regressions by default."
+            if is_t114
+            else None
+        ),
+    )
+
+
+@app.get("/api/flex-results/analytics", response_model=FlexResultAnalyticsResponse, tags=["FLEX Results"])
+async def get_flex_results_analytics():
+    """
+    Returns outcome distributions, fuel comparisons, droplet burn scaling,
+    and a pressure-versus-burning-rate correlation with explicit exclusion of Test #114.
+    """
+    df = get_flex_results_df()
+
+    # 1. Outcome Distribution
+    outcome_dist = [
+        {"outcome": str(k), "count": int(v)}
+        for k, v in df["test_end_outcome"].value_counts().items()
+    ]
+
+    # 2. Fuel Breakdown
+    fuel_dist = [
+        {"fuel": str(k), "count": int(v)}
+        for k, v in df["fuel"].value_counts().items()
+    ]
+
+    # 3. Outcome by Fuel
+    outcome_by_fuel = []
+    for fuel_name in df["fuel"].unique():
+        f_sub = df[df["fuel"] == fuel_name]
+        counts = f_sub["test_end_outcome"].value_counts().to_dict()
+        outcome_by_fuel.append({
+            "fuel": str(fuel_name),
+            "Extinction": int(counts.get("Extinction", 0)),
+            "Disruption": int(counts.get("Disruption", 0)),
+            "Completion": int(counts.get("Completion", 0)),
+            "total": len(f_sub),
+        })
+
+    # 4. Pressure vs Burning Rate Analysis
+    # Strict separation of valid non-zero pressure points and excluded points
+    valid_pts = []
+    excluded_pts = []
+
+    for _, r in df.iterrows():
+        t_num = int(r["flex_test_num"])
+        p_val = float(r["ambient_pressure_mmhg"])
+        br_val = float(r["burning_rate_mm2_s"]) if pd.notna(r["burning_rate_mm2_s"]) else None
+
+        if p_val <= 0.0:
+            excluded_pts.append({
+                "flex_test_num": t_num,
+                "flex_identifier": str(r["flex_identifier"]).strip(),
+                "fuel": str(r["fuel"]).strip(),
+                "ambient_pressure_mmhg": p_val,
+                "ambient_pressure_atm": float(r["ambient_pressure_atm"]),
+                "burning_rate_mm2_s": br_val,
+                "outcome": str(r["test_end_outcome"]).strip(),
+                "reason": "Ambient pressure recorded as 0.0 mmHg in NASA source (combustion physically impossible in vacuum; sensor dropout)",
+            })
+        elif br_val is None:
+            excluded_pts.append({
+                "flex_test_num": t_num,
+                "flex_identifier": str(r["flex_identifier"]).strip(),
+                "fuel": str(r["fuel"]).strip(),
+                "ambient_pressure_mmhg": p_val,
+                "ambient_pressure_atm": float(r["ambient_pressure_atm"]),
+                "burning_rate_mm2_s": None,
+                "outcome": str(r["test_end_outcome"]).strip(),
+                "reason": "Missing burning rate measurement in NASA source file",
+            })
+        else:
+            valid_pts.append({
+                "flex_test_num": t_num,
+                "flex_identifier": str(r["flex_identifier"]).strip(),
+                "fuel": str(r["fuel"]).strip(),
+                "ambient_pressure_mmhg": round(p_val, 1),
+                "ambient_pressure_atm": round(float(r["ambient_pressure_atm"]), 3),
+                "burning_rate_mm2_s": round(br_val, 3),
+                "droplet_initial_diameter_mm": round(float(r["droplet_initial_diameter_mm"]), 2) if pd.notna(r["droplet_initial_diameter_mm"]) else None,
+                "burn_time_s": round(float(r["burn_time_s"]), 1) if pd.notna(r["burn_time_s"]) else None,
+                "outcome": str(r["test_end_outcome"]).strip(),
+            })
+
+    # Linear regression on valid points (P vs K)
+    linear_reg = None
+    if valid_pts:
+        xs = np.array([pt["ambient_pressure_mmhg"] for pt in valid_pts])
+        ys = np.array([pt["burning_rate_mm2_s"] for pt in valid_pts])
+        if len(xs) > 1 and np.std(xs) > 0:
+            slope, intercept = np.polyfit(xs, ys, 1)
+            corr = float(np.corrcoef(xs, ys)[0, 1]) if np.std(ys) > 0 else 0.0
+            linear_reg = {
+                "slope": round(float(slope), 6),
+                "intercept": round(float(intercept), 4),
+                "r_squared": round(float(corr ** 2), 4),
+                "pearson_r": round(float(corr), 4),
+                "sample_size": len(valid_pts),
+                "equation": f"K (mm²/s) = {round(float(slope), 6)} * P(mmHg) + {round(float(intercept), 4)}",
+                "note": "Regression calculated exclusively on valid flight tests with P > 0 and recorded burning rate.",
+            }
+
+    p_vs_br_data = {
+        "valid_points": valid_pts,
+        "excluded_points": excluded_pts,
+        "total_valid": len(valid_pts),
+        "total_excluded": len(excluded_pts),
+        "excluded_due_to_zero_pressure": sum(1 for p in excluded_pts if "0.0 mmHg" in p["reason"]),
+        "excluded_due_to_missing_burning_rate": sum(1 for p in excluded_pts if "Missing burning rate" in p["reason"]),
+        "regression": linear_reg,
+    }
+
+    # 5. Droplet Initial Diameter vs Burn Time
+    diameter_vs_time = []
+    for _, r in df.iterrows():
+        if pd.notna(r["droplet_initial_diameter_mm"]) and pd.notna(r["burn_time_s"]):
+            diameter_vs_time.append({
+                "flex_test_num": int(r["flex_test_num"]),
+                "flex_identifier": str(r["flex_identifier"]).strip(),
+                "fuel": str(r["fuel"]).strip(),
+                "initial_diameter_mm": round(float(r["droplet_initial_diameter_mm"]), 2),
+                "burn_time_s": round(float(r["burn_time_s"]), 1),
+                "outcome": str(r["test_end_outcome"]).strip(),
+            })
+
+    # 6. Burning Rate Distribution Bins (0.0 to 1.2 mm²/s)
+    bins = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+    bin_labels = ["0.0–0.2", "0.2–0.4", "0.4–0.6", "0.6–0.8", "0.8–1.0", "1.0–1.2"]
+    br_series = df["burning_rate_mm2_s"].dropna()
+    br_binned = pd.cut(br_series, bins=bins, labels=bin_labels, right=False)
+    br_dist = [
+        {"bin": label, "count": int((br_binned == label).sum())}
+        for label in bin_labels
+    ]
+
+    return FlexResultAnalyticsResponse(
+        outcome_distribution=outcome_dist,
+        fuel_breakdown=fuel_dist,
+        outcome_by_fuel=outcome_by_fuel,
+        pressure_vs_burning_rate=p_vs_br_data,
+        diameter_vs_burn_time=diameter_vs_time,
+        burning_rate_distribution=br_dist,
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    from backend.config import HOST, PORT
+
+    uvicorn.run("backend.main:app", host=HOST, port=PORT, reload=True)
+

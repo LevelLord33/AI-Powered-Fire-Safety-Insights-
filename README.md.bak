@@ -1,0 +1,137 @@
+# 🔥 Flame in Freefall: AI-Powered Fire Safety Insights from Microgravity Combustion Data
+
+A **NASA Space Apps Challenge** project exploring how flames behave in the microgravity environment of space, built using authentic flight data from NASA's **BASS-II (Burning and Suppression of Solids - II)** investigation conducted aboard the **International Space Station (ISS)**.
+
+---
+
+## 🚀 Overview
+
+On Earth, gravity causes natural buoyancy: hot combustion gases rise, pulling in fresh oxygen and forming a familiar teardrop flame. In orbit, natural convection is completely absent. Flames burn in spherical shapes, rely solely on spacecraft ventilation fans for oxygen, produce elevated levels of toxic Carbon Monoxide, and can sustain combustion at lower oxygen levels than predicted by standard terrestrial screening tests (*NASA-STD-6001 Test 1*).
+
+**Flame in Freefall** combines an interactive dashboard of all 126 ISS flight burns with a **grounded AI Research Assistant** that answers combustion queries using verified NASA reports and citations.
+
+---
+
+## 📁 Repository Structure
+
+```text
+flame-in-freefall/
+├── app.py                      # Main Streamlit web application
+├── requirements.txt            # Python dependencies (Streamlit, Plotly, Pandas, PyMuPDF, Scikit-Learn)
+├── data_inventory.md           # Full data dictionary, sensor completeness & NASA citations
+├── README.md                   # Project documentation and quick start guide
+├── data/
+│   ├── raw/
+│   │   ├── PSI-25_metadata_PSI_metadata_PSI-101_BASS-II.zip  # Raw ISA-Tab metadata archive
+│   │   └── metadata_extracted/                               # Extracted ISA-Tab text files
+│   ├── docs/
+│   │   └── bass_ii_summary_report.pdf                        # Official 144-page NASA report (TM-20210011385)
+│   └── processed/
+│       ├── bass_ii_experiments.csv                           # Cleaned dataset of all 126 flight burns
+│       └── search_index.json                                 # Chunked passages with exact citations
+└── src/
+    ├── __init__.py             # Python package marker
+    ├── data_loader.py          # Data loading, filtering, and summary statistics
+    ├── document_processor.py   # PDF & text chunking engine preserving page numbers
+    ├── retriever.py            # TF-IDF evidence retrieval engine with strict thresholds
+    ├── llm_client.py           # Grounded assistant supporting Gemini LLM or Local Evidence Mode
+    ├── extract_experiments.py  # Automated PDF-to-CSV table extraction engine
+    └── test_audit.py           # Automated verification test suite
+```
+
+---
+
+## 🌟 Key Application Features
+
+1. **🚀 Mission Briefing (Home Page):**
+   * Overview of the NASA Space Apps Challenge goal.
+   * Interactive side-by-side comparison of **Earth Fire (1g)** vs. **Space Fire (0g)**.
+   * Key ISS facility telemetry badges.
+2. **🤖 AI Research Assistant (New in Milestone 2):**
+   * Ask natural-language questions about NASA combustion research.
+   * Grounded strictly in the **144-page official NASA summary report**, ISA-Tab metadata, and 126 flight experiment records.
+   * **Dual Mode Support:**
+     * **Local Evidence-Grounded Synthesis:** Works 100% out-of-the-box with **zero API keys** required.
+     * **Live Generative LLM Mode:** Seamlessly connects to Google Gemini when an API key is provided.
+   * Cites exact source filenames, page numbers, and direct links to the NASA PSI repository.
+   * Refuses to fabricate answers when evidence is missing.
+   * Includes safety disclaimers separating research synthesis from operational flight approvals.
+3. **🔍 Experiment Explorer:**
+   * Searchable and filterable table of all 126 flight tests.
+   * Filter by **Lead Principal Investigator**, **Fuel Material**, **Flow Direction**, and **Oxygen Concentration ($O_2$ %)**.
+   * Download filtered datasets as a CSV file.
+   * Detailed missing data and sensor completeness diagnostics.
+4. **📊 Interactive Plotly Data Visualizations:**
+   * **Oxygen vs. Toxic CO Generation:** Highlights fuel-rich burning and dangerous Carbon Monoxide spikes up to 950 ppm in space.
+   * **Fuel Material Distribution:** Compares PMMA rods, thin PMMA films, cotton/fiberglass SIBAL fabric, and Nomex.
+   * **Airflow Configuration vs. Oxygen Depletion ($\Delta O_2$):** Analyzes opposed vs. concurrent flow burn durations.
+   * **Combustion Stoichiometry:** Linear correlation verifying $O_2$ consumed vs. $CO_2$ produced.
+5. **🔬 Single Experiment Deep-Dive:**
+   * Inspect telemetry for any individual test record (e.g. `B1`, `T1`, `O1`, `M1`).
+   * Displays flow restrictor plates, air velocities, and pre/post-burn gas measurements.
+   * Unfiltered astronaut flight log observations and anomalies.
+6. **📋 Data Inventory & NASA Sources:**
+   * Complete provenance linking to [NASA PSI (PSI-25)](https://psi.nasa.gov/physci/repo/data/investigations/PSI-25) and DOI `10.60555/4qc4-de67`.
+
+### 7. ⚡ Evidence-to-Insight Engine (Phase 7):
+   * **Smart Experiment Matcher:** Search flight trials with explainable matching reasons and genuine parameters.
+   * **Scientific Comparison Engine:** Side-by-side telemetry matrices for 2–4 tests with mathematical delta calculations.
+   * **Scientific Compatibility Diagnostics:** Active warnings on cross-material comparisons (different heats of combustion), aerodynamic mismatches (opposed vs concurrent flow), and broken igniter complications.
+   * **4-Tier Epistemological Breakdown:** Rigorous separation of Observed Facts → Calculated Results → Physical Interpretation → Documented Scientific Limitations.
+
+---
+
+## 🛠️ Quick Start (Running Locally)
+
+### 1. Prerequisites
+* Python 3.9+ installed
+* Node.js 18+ and npm installed
+
+### 2. Install Dependencies
+```bash
+# Install Python backend dependencies
+pip install -r requirements.txt
+
+# Install React frontend dependencies
+cd frontend
+npm install
+cd ..
+```
+
+### 3. Launch the Architecture
+
+#### Option A: Run the Modern React + FastAPI Stack (Recommended for Demo)
+1. **Start the FastAPI Backend (Port 8000):**
+   ```bash
+   python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+   ```
+2. **Start the React Frontend (Port 5173):**
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+3. Open **`http://localhost:5173`** in your browser.
+
+#### Option B: Run the Streamlit Application (Backup Architecture)
+```bash
+streamlit run app.py --server.port 8501
+```
+* Open **`http://localhost:8501`** in your browser.
+
+---
+
+## 🚀 Pre-Demo Checklist for Space Apps Judges
+1. ✅ Ensure FastAPI is running on `http://127.0.0.1:8000` (verify `/api/health` returns status `ok`).
+2. ✅ Ensure React dev server is running on `http://127.0.0.1:5173`.
+3. ✅ Go to **Insight Engine** (`/insights`) and click preset `⚠️ T1 vs P1 (Cross-Material Warning Demo)` to demonstrate scientific compatibility guardrails.
+4. ✅ Show the **4-Tier Evidence-to-Insight** cards (Observed, Calculated, Interpretation, Limitations).
+5. ✅ Demonstrate the **AI Research Assistant** (`/assistant`) with grounded questions (e.g., *"What was the purpose of BASS-II?"*) and show unprompted refusal for out-of-domain questions.
+
+---
+
+## 🔬 Data Sources & NASA Reference
+* **NASA Investigation:** BASS-II (Burning and Suppression of Solids - II)
+* **Archive ID:** PSI-25 (Physical Sciences Informatics)
+* **DOI:** [`10.60555/4qc4-de67`](https://doi.org/10.60555/4qc4-de67)
+* **NASA Technical Memorandum:** *NASA/TM-20210011385* (October 2021)
+* **License:** Creative Commons CC0-1.0 (Public Domain)

@@ -1,0 +1,169 @@
+/**
+ * API client layer communicating with the FastAPI backend.
+ * Uses Vite proxy (/api -> http://127.0.0.1:8000/api) with resilient error handling,
+ * request timeouts, and strict schema validation.
+ */
+
+import {
+  HealthData,
+  DatasetSummary,
+  ExperimentListResponse,
+  ExperimentRecord,
+  ExtinctionBoundaryResponse,
+  GasCorrelationsResponse,
+  AssistantResponse,
+  InventoryResponse,
+  ExperimentMatchCriteria,
+  ExperimentMatchResponse,
+  ExperimentComparisonResponse,
+} from '../types';
+
+const API_BASE = ((import.meta as any).env?.VITE_API_BASE_URL as string) || '/api';
+const DEFAULT_TIMEOUT_MS = 30000; // 30s timeout for RAG queries
+
+export class ApiError extends Error {
+  status: number;
+  detail?: string;
+  constructor(message: string, status: number, detail?: string) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+    this.name = 'ApiError';
+  }
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+  const url = `${API_BASE}${endpoint}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorMsg = `Server responded with HTTP ${response.status}`;
+      let detail: string | undefined;
+
+      try {
+        const errorData = await response.json();
+        if (errorData.detail) {
+          detail = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+          if (detail) {
+            errorMsg = detail;
+          }
+        }
+      } catch {
+        // Fallback to text status if not JSON
+      }
+
+      throw new ApiError(errorMsg, response.status, detail);
+    }
+
+    return await response.json();
+  } catch (err: unknown) {
+    clearTimeout(timeoutId);
+
+    if (err instanceof ApiError) {
+      throw err;
+    }
+
+    if ((err as Error)?.name === 'AbortError') {
+      throw new ApiError(
+        `Request to ${endpoint} timed out after ${timeoutMs / 1000} seconds. The backend may be performing intensive reasoning or is busy.`,
+        408
+      );
+    }
+
+    // Network failure / server offline
+    throw new ApiError(
+      'Unable to connect to the NASA analytics backend. Please verify the FastAPI service is running at http://127.0.0.1:8000.',
+      0
+    );
+  }
+}
+
+export const api = {
+  /** Fetch system health, platform telemetry, and active AI model */
+  getHealth: () => request<HealthData>('/health'),
+
+  /** Fetch global dataset summary, oxygen limits, and filter lists */
+  getSummary: () => request<DatasetSummary>('/experiments/summary'),
+
+  /** Query filterable, paginated experiment records */
+  getExperiments: (params: {
+    search?: string;
+    material?: string;
+    pi?: string;
+    flow_config?: string;
+    min_o2?: number;
+    max_o2?: number;
+    page?: number;
+    limit?: number;
+  } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.append('search', params.search);
+    if (params.material) query.append('material', params.material);
+    if (params.pi) query.append('pi', params.pi);
+    if (params.flow_config) query.append('flow_config', params.flow_config);
+    if (params.min_o2 !== undefined) query.append('min_o2', params.min_o2.toString());
+    if (params.max_o2 !== undefined) query.append('max_o2', params.max_o2.toString());
+    if (params.page !== undefined) query.append('page', params.page.toString());
+    if (params.limit !== undefined) query.append('limit', params.limit.toString());
+
+    const qs = query.toString();
+    return request<ExperimentListResponse>(`/experiments${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Lookup detailed telemetry for a single test run */
+  getExperimentById: (testId: string) =>
+    request<ExperimentRecord>(`/experiments/${encodeURIComponent(testId.trim())}`),
+
+  /** Fetch oxygen vs airflow flame survival points */
+  getExtinctionBoundary: () =>
+    request<ExtinctionBoundaryResponse>('/analytics/extinction-boundary'),
+
+  /** Fetch stoichiometry and CO generation correlation matrix */
+  getGasCorrelations: () =>
+    request<GasCorrelationsResponse>('/analytics/gas-correlations'),
+
+  /** Submit scientific query to Gemini RAG Assistant */
+  queryAssistant: (question: string) =>
+    request<AssistantResponse>(
+      '/assistant/query',
+      {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+      },
+      45000 // Allow up to 45s for model generation
+    ),
+
+  /** Fetch file manifest and document provenance statistics */
+  getInventory: () => request<InventoryResponse>('/inventory'),
+
+  /** Phase 7: Match experiments with transparent scientific criteria */
+  matchExperiments: (criteria: ExperimentMatchCriteria) =>
+    request<ExperimentMatchResponse>('/insights/match', {
+      method: 'POST',
+      body: JSON.stringify(criteria),
+    }),
+
+  /** Phase 7: Side-by-side scientific comparison and 4-tier Evidence-to-Insight */
+  compareExperiments: (testIds: string[], includeSynthesis: boolean = true) =>
+    request<ExperimentComparisonResponse>('/insights/compare', {
+      method: 'POST',
+      body: JSON.stringify({ test_ids: testIds, include_synthesis: includeSynthesis }),
+    }),
+};
